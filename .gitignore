@@ -1,0 +1,7 @@
+node_modules
+.next
+.env*.local
+next-env.d.ts
+*.tsbuildinfo
+# 每台电脑上 Claude Code 自己记录的本地权限，不共享
+.claude/settings.local.json
