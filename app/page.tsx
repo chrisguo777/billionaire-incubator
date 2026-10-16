@@ -118,15 +118,15 @@ export default function Page() {
     });
   }
 
-  async function uploadPdf(file: File) {
-    await guard("提取 PDF 文字…", async () => {
+  async function uploadCvFile(file: File) {
+    await guard("提取简历文字…", async () => {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch("/api/pdf", { method: "POST", body: form });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "PDF 上传失败");
+      if (!res.ok) throw new Error(data.error ?? "简历文件上传失败");
       setCv(data.text);
-      setUploadInfo(`已从 ${data.name} 提取 ${data.pages} 页文字，请检查下方文本是否完整`);
+      setUploadInfo(data.format === "pdf" ? `已从 ${data.name} 提取 ${data.pages} 页文字，请检查下方文本是否完整` : `已从 ${data.name} 提取文字，请检查下方文本是否完整`);
     });
   }
 
@@ -224,22 +224,22 @@ export default function Page() {
 
       <section className="card">
         <h2>1. 输入：简历 CV 与目标 JD <Who kinds={["user"]} /></h2>
-        <p className="note">你提供原材料。PDF 的文字提取由代码完成，不用 AI。点「解析并分析」后，AI 会依次完成第 2、3 步。</p>
+        <p className="note">你提供原材料。PDF 和 Word 的文字提取由代码完成，不用 AI。点「解析并分析」后，AI 会依次完成第 2、3 步。</p>
         <div className="row" style={{ marginTop: 0, marginBottom: 10 }}>
           <label className="upload">
-            上传 PDF 简历
+            上传简历文件
             <input
               type="file"
-              accept="application/pdf,.pdf"
+              accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
               disabled={!!busy}
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) uploadPdf(f);
+                if (f) uploadCvFile(f);
                 e.target.value = "";
               }}
             />
           </label>
-          <span className="note">{uploadInfo ?? "也可以直接在左侧粘贴简历文字。仅支持可复制文字的 PDF，扫描件暂不支持。"}</span>
+          <span className="note">{uploadInfo ?? "支持可复制文字的 PDF 和 Word .docx；扫描件暂不支持。也可以直接在左侧粘贴简历文字。"}</span>
         </div>
         <div className="grid2">
           <textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} aria-label="CV" />
