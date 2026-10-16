@@ -9,3 +9,13 @@
 - 不要替团队其他成员做决定；没有用户明确要求，不要 commit、不要 push、不要安装额外依赖。
 - 不要把 API key 写进任何会被提交的文件；key 只放在 `.env.local`。
 - `CLAUDE.md` 里的追问规则是 Paxton 个人的协作习惯，不是对所有人的要求。
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
