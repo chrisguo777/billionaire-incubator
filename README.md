@@ -44,6 +44,28 @@ npm run dev
 - 真实模型每跑一遍大约十几次调用，按量计费。
 - 页面状态只保存在浏览器里，刷新页面会丢失。
 
+## 开发规则：在自己的 branch 上做
+
+`main` 分支受保护，**不能直接推送**，所有改动都通过自己的 branch 和 Pull Request 合并。
+
+```bash
+git checkout main
+git pull
+git checkout -b 你的名字/做什么      # 例如 ziyue/ats-rules
+```
+
+改完之后：
+
+```bash
+git add -A
+git commit -m "简短说明你改了什么"
+git push -u origin 你的名字/做什么
+```
+
+然后在 GitHub 页面点「Compare & pull request」发起合并请求，由 Paxton 看过再合并。用 GitHub Desktop 的话，对应操作是 Current Branch → New Branch，改完 Commit，再 Push / Create Pull Request。
+
+不确定怎么做时，可以让你的 AI 助手帮你完成这些步骤，但提交和推送要由你明确下指令。
+
 ## 两种模式
 
 - **MOCK**：内置示例逻辑，**不读你粘贴的内容**，永远返回同一份示例数据。
