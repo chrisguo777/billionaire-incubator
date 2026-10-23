@@ -83,6 +83,26 @@ export const Affiliation = z.object({
 });
 ```
 
+### 教育经历（v0 已实现，未经团队确认）
+
+教育经历不拆成卡片，单独一张表 `education`，挂在经历库上：
+
+```ts
+export const Education = z.object({
+  id: z.string(),
+  school: z.string(),
+  degree: z.string().nullable(),          // 学位，如 M.S.
+  field: z.string().nullable(),           // 专业
+  location: z.string().nullable(),
+  start_date: z.string().nullable(),
+  end_date: z.string().nullable(),        // 保留原文写法，如 "expected 2027"
+  gpa: z.string().nullable(),             // 保留原文写法
+  details: z.array(z.string()),           // 荣誉、相关课程、论文，逐条照搬 CV
+});
+```
+
+来自 CV 解析，视为已确认；生成简历时照搬，不经过 AI 改写，也暂不参与 JD 匹配。
+
 > 实现时 `Card` 里的各组 Fact 可以落成 `card_fields` 表的行（field_key + text + status + source），和 Christine 的 7 张表设计一致；上面的对象形状是给 LLM 抽取和 Zod 校验用的。
 
 ## 3. 数据表（沿用 Christine 的 7 张，字段按上面补齐）

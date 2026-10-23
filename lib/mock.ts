@@ -14,6 +14,18 @@ import { FACT_FIELDS } from "./schema";
 
 export function mockParseCV(): ParsedCV {
   return {
+    education: [
+      {
+        school: "University of Michigan",
+        degree: "M.S.",
+        field: "Biostatistics",
+        location: null,
+        start_date: null,
+        end_date: "expected 2027",
+        gpa: null,
+        details: [],
+      },
+    ],
     affiliations: [
       {
         organization: "Department of Biostatistics, University of Michigan",
