@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { SAMPLE_CV, SAMPLE_JD } from "@/lib/sample";
+import { DIMENSIONS, type EvaluationReport } from "@/lib/evaluation-schema";
+import { bulletKey, type ReviewChoices } from "@/lib/review-types";
 import { FACT_FIELDS } from "@/lib/schema";
 import type { Asked, ExperienceDB, Gap, GapStatus, JDAnalysis, Requirement } from "@/lib/schema";
 import type { RankedCard, ResumeOutput, RewrittenCard } from "@/lib/pipeline";
@@ -80,6 +82,11 @@ export default function Page() {
   const [interviewDone, setInterviewDone] = useState(false);
   const [answer, setAnswer] = useState("");
   const [result, setResult] = useState<FinishResult | null>(null);
+  const [choices, setChoices] = useState<ReviewChoices>({});
+  const [reviewed, setReviewed] = useState<{ rewritten: RewrittenCard[]; resume: ResumeOutput } | null>(null);
+  const [evaluation, setEvaluation] = useState<{ signature: string; report: EvaluationReport } | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadInfo, setUploadInfo] = useState<string | null>(null);
@@ -109,6 +116,9 @@ export default function Page() {
       setPending(null);
       setInterviewDone(false);
       setResult(null);
+      setReviewed(null);
+      setChoices({});
+      setEditing(null);
       const p = await call<{ db: ExperienceDB }>({ step: "parse", cv });
       const j = await call<{ jd: JDAnalysis }>({ step: "jd", jd: jdText });
       const a = await call<{ gaps: Gap[] }>({ step: "analyze", db: p.db, jd: j.jd, asked: {} });
@@ -118,15 +128,15 @@ export default function Page() {
     });
   }
 
-  async function uploadPdf(file: File) {
-    await guard("提取 PDF 文字…", async () => {
+  async function uploadResume(file: File) {
+    await guard("提取简历文字…", async () => {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch("/api/pdf", { method: "POST", body: form });
+      const res = await fetch("/api/resume", { method: "POST", body: form });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "PDF 上传失败");
+      if (!res.ok) throw new Error(data.error ?? "简历上传失败");
       setCv(data.text);
-      setUploadInfo(`已从 ${data.name} 提取 ${data.pages} 页文字，请检查下方文本是否完整`);
+      setUploadInfo(`已从 ${data.name} 提取文字${data.pages ? `（${data.pages} 页）` : ""}，请检查下方文本是否完整`);
     });
   }
 
@@ -206,7 +216,52 @@ export default function Page() {
   async function finish() {
     if (!db || !jd) return;
     await guard("选择经历、改写 bullet、检查事实…", async () => {
-      setResult(await call<FinishResult>({ step: "finish", db, jd, gaps }));
+      const generated = await call<FinishResult>({ step: "finish", db, jd, gaps });
+      const initial = await call<{ rewritten: RewrittenCard[]; resume: ResumeOutput }>({ step: "review", db, jd, gaps, rewritten: generated.rewritten, choices: {} });
+      setResult(generated);
+      setChoices({});
+      setEditing(null);
+      setReviewed(initial);
+    });
+  }
+
+  async function reviewBullet(key: string, text: string, status: "accepted" | "excluded" | "pending") {
+    if (!db || !jd || !result) return;
+    await guard("更新审阅结果…", async () => {
+      const next = { ...choices, [key]: { text, status } };
+      const response = await call<{ rewritten: RewrittenCard[]; resume: ResumeOutput }>({
+        step: "review", db, jd, gaps, rewritten: result.rewritten, choices: next,
+      });
+      setChoices(next);
+      setReviewed(response);
+      setEditing(null);
+    });
+  }
+
+  const sources = useMemo(() => {
+    const index = new Map<string, { text: string; field: string; source: string; status: string; card: string }>();
+    for (const card of db?.cards ?? []) {
+      for (const field of FACT_FIELDS) for (const fact of card[field]) {
+        index.set(fact.id, { ...fact, field: FIELD_LABEL[field], card: card.name });
+      }
+      for (const outcome of card.outcomes) {
+        index.set(outcome.id, { text: `${outcome.note}${outcome.value !== null ? `：${outcome.value} ${outcome.unit ?? ""}` : ""}${outcome.basis ? `（口径：${outcome.basis}）` : ""}`, field: "结果", source: outcome.source, status: outcome.status, card: card.name });
+      }
+    }
+    return index;
+  }, [db]);
+  const preview = reviewed?.resume;
+  const acceptedCount = (reviewed?.rewritten ?? []).reduce((n, c) => n + c.bullets.filter((b, i) => b.ok && choices[bulletKey(c.card_id, i)]?.status === "accepted").length, 0);
+  const totalBullets = result?.rewritten.reduce((n, c) => n + c.bullets.length, 0) ?? 0;
+
+  const evaluationSignature = JSON.stringify({ cv, jdText, db, jd, gaps, rewritten: result?.rewritten, choices });
+  const currentEvaluation = evaluation?.signature === evaluationSignature ? evaluation.report : null;
+  async function runEvaluation() {
+    if (!db || !jd || !result || acceptedCount === 0) return;
+    const signature = evaluationSignature;
+    await guard("正在评估简历质量…", async () => {
+      const response = await call<{ evaluation: EvaluationReport }>({ step: "evaluate", cv, db, jd, gaps, rewritten: result.rewritten, choices });
+      setEvaluation({ signature, report: response.evaluation });
     });
   }
 
@@ -224,22 +279,22 @@ export default function Page() {
 
       <section className="card">
         <h2>1. 输入：简历 CV 与目标 JD <Who kinds={["user"]} /></h2>
-        <p className="note">你提供原材料。PDF 的文字提取由代码完成，不用 AI。点「解析并分析」后，AI 会依次完成第 2、3 步。</p>
+        <p className="note">你提供原材料。上传文件的文字提取由代码完成，不用 AI。点「解析并分析」后，AI 会依次完成第 2、3 步。</p>
         <div className="row" style={{ marginTop: 0, marginBottom: 10 }}>
           <label className="upload">
-            上传 PDF 简历
+            上传简历（PDF / Word / TXT）
             <input
               type="file"
-              accept="application/pdf,.pdf"
+              accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
               disabled={!!busy}
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) uploadPdf(f);
+                if (f) uploadResume(f);
                 e.target.value = "";
               }}
             />
           </label>
-          <span className="note">{uploadInfo ?? "也可以直接在左侧粘贴简历文字。仅支持可复制文字的 PDF，扫描件暂不支持。"}</span>
+          <span className="note">{uploadInfo ?? "支持 PDF、Word（.docx）和 TXT，每个文件不超过 10MB。扫描件暂不支持，也可以直接粘贴文字。"}</span>
         </div>
         <div className="grid2">
           <textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} aria-label="CV" />
@@ -375,29 +430,89 @@ export default function Page() {
                 </tbody>
               </table>
 
-              <h2 style={{ marginTop: 16 }}>Bullet 与事实校验</h2>
+              <h2 style={{ marginTop: 16 }}>改写对照与逐条审阅</h2>
+              <p className="note" role="status">共 {totalBullets} 条，已接受 {acceptedCount} 条。只有已接受且通过规则校验的内容才进入下方简历。</p>
+              <p className="note">左侧是经历库中抽取的事实，接近原文但不等同于原始简历逐字内容。规则校验只检查来源、确认状态和数字；请同时核实职责和个人贡献是否准确。</p>
               {result.rewritten.map((rc) => (
                 <div className="cardbox" key={rc.card_id}>
                   <h3>{cardName(rc.card_id)}</h3>
-                  {rc.bullets.map((b, i) => (
-                    <div className="fact" key={i}>
-                      <span className={`chip ${b.ok ? "user_confirmed" : "blocked"}`}>{b.ok ? "通过" : "已拦截"}</span> {b.text}
-                      <span className="note"> ← {b.source_ids.join(", ")}{b.issues.length ? ` ｜ ${b.issues.join("；")}` : ""}</span>
-                    </div>
-                  ))}
+                  {rc.bullets.map((original, i) => {
+                    const key = bulletKey(rc.card_id, i);
+                    const b = reviewed?.rewritten.find((c) => c.card_id === rc.card_id)?.bullets[i] ?? original;
+                    const status = choices[key]?.status ?? "pending";
+                    const label = !b.ok ? "已拦截" : status === "accepted" ? "已接受" : status === "excluded" ? "已排除" : "待审阅";
+                    return (
+                      <article className="bullet-review" key={key} aria-label={`${cardName(rc.card_id)} 第 ${i + 1} 条审阅`}>
+                        <div className="review-heading"><b>Bullet {i + 1}</b><span className={`chip ${!b.ok ? "blocked" : status === "accepted" ? "user_confirmed" : "unknown"}`}>{label}</span></div>
+                        <div className="grid2">
+                          <div className="review-panel">
+                            <h4>改写前 · 来源事实</h4>
+                            {original.source_ids.length === 0 && <p className="err">未引用来源事实</p>}
+                            {original.source_ids.map((id) => {
+                              const fact = sources.get(id);
+                              return <div className="source-fact" key={id}>
+                                {fact ? <><p>{fact.text}</p><span className="note">{fact.field} · {fact.source === "cv_parse" ? "简历解析" : fact.source === "dialogue" ? "追问补充" : "用户编辑"} · {STATUS_LABEL[fact.status as keyof typeof STATUS_LABEL]} · {id}{fact.card !== cardName(rc.card_id) ? ` · 来自「${fact.card}」` : ""}</span></> : <p className="err">找不到来源 {id}</p>}
+                              </div>;
+                            })}
+                          </div>
+                          <div className="review-panel">
+                            <h4>改写后 · {b.text !== original.text ? "你的修改稿" : "AI 建议稿"}</h4>
+                            {editing === key ? <>
+                              <textarea className="short" aria-label={`编辑 ${cardName(rc.card_id)} 第 ${i + 1} 条`} value={editText} onChange={(e) => setEditText(e.target.value)} disabled={!!busy} />
+                              <div className="row"><button disabled={!!busy || !editText.trim()} onClick={() => reviewBullet(key, editText, "pending")}>保存并重新校验</button><button className="ghost" disabled={!!busy} onClick={() => setEditing(null)}>取消</button></div>
+                            </> : <p className="bullet-text">{b.text}</p>}
+                            {b.text !== original.text && <details><summary>查看 AI 原建议</summary><p>{original.text}</p></details>}
+                            <p className={`note ${!b.ok ? "err" : ""}`}>{b.ok ? "来源与数字规则校验通过" : b.issues.join("；")}</p>
+                            <div className="row">
+                              <button disabled={!!busy || !b.ok || editing !== null || status === "accepted"} onClick={() => reviewBullet(key, b.text, "accepted")}>接受这条</button>
+                              <button className="ghost" disabled={!!busy || editing !== null} onClick={() => { setEditing(key); setEditText(b.text); }}>编辑</button>
+                              <button className="ghost" disabled={!!busy || editing !== null || status === "excluded"} onClick={() => reviewBullet(key, b.text, "excluded")}>排除这条</button>
+                              {status !== "pending" && <button className="ghost" disabled={!!busy || editing !== null} onClick={() => reviewBullet(key, b.text, "pending")}>撤回选择</button>}
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               ))}
 
               <h2 style={{ marginTop: 16 }}>最终简历（Markdown）</h2>
-              <pre className="out">{result.resume.markdown}</pre>
+              <p className="note">{acceptedCount ? `当前简历包含 ${acceptedCount} 条已接受的经历描述。` : "请先接受上方至少一条描述，经历部分才会写入简历。"}</p>
+              <pre className="out">{preview?.markdown}</pre>
               <p className="note">
-                JD 覆盖：已覆盖 {result.resume.coverage.covered} · 偏弱 {result.resume.coverage.weak} · 未知 {result.resume.coverage.unknown} · 真缺口 {result.resume.coverage.true_gap}
+                JD 覆盖：已覆盖 {preview?.coverage.covered} · 偏弱 {preview?.coverage.weak} · 未知 {preview?.coverage.unknown} · 真缺口 {preview?.coverage.true_gap}
               </p>
-              {result.resume.warnings.length > 0 && (
-                <ul className="warn">{result.resume.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+              {!!preview?.warnings.length && (
+                <ul className="warn">{preview?.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
               )}
               <div className="row">
-                <button className="ghost" onClick={() => navigator.clipboard.writeText(result.resume.markdown)}>复制 Markdown</button>
+                <button className="ghost" disabled={!!busy || acceptedCount === 0 || editing !== null} onClick={() => preview && navigator.clipboard.writeText(preview.markdown)}>复制 Markdown</button>
+              </div>
+              <div className="evaluation-section">
+                <h2>简历质量评估 <Who kinds={["ai", "rule"]} /></h2>
+                <p className="note">对比原简历与已接受的当前稿，按六个维度评估，并核验引用能否在原文中找到。每项 0–3 分，无法判断时不评分。建议仍需你审阅，评估不会自动修改简历。</p>
+                <p className="note">这是文字内容评估，不包含版式、PDF 解析测试或 ATS 通过率预测。LIVE 模式点击后调用一次模型，使用你的 API 额度。</p>
+                <button disabled={!!busy || acceptedCount === 0 || editing !== null} onClick={runEvaluation}>{currentEvaluation ? "重新评估" : "评估当前简历"}</button>
+                {busy === "正在评估简历质量…" && <p role="status">正在评估简历质量…</p>}
+                {evaluation && !currentEvaluation && <p className="note">简历或审阅内容已变化，请重新评估。</p>}
+                {currentEvaluation && <>
+                  <p>{currentEvaluation.summary}</p>
+                  {currentEvaluation.warnings.length > 0 && <ul className="warn">{currentEvaluation.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>}
+                  {currentEvaluation.dimensions.map((dimension) => <div className="cardbox" key={dimension.id}>
+                    <h3>{DIMENSIONS[dimension.id]}</h3>
+                    <div className="grid2">{(["before", "after"] as const).map((version) => <div className="review-panel" key={version}>
+                      <h4>{version === "before" ? "原简历" : "当前稿"} · {dimension[version].score === null ? "暂不评分" : `${dimension[version].score} / 3`}</h4>
+                      <p>{dimension[version].reason}</p>
+                      {dimension[version].evidence.map((e, i) => <blockquote key={i}><span className="note">{{ before: "原简历", after: "当前稿", confirmed: "已确认事实", jd: "岗位要求" }[e.source]}</span><br />{e.quote}</blockquote>)}
+                    </div>)}</div>
+                    {dimension.missing.length > 0 && <><b>缺失信息</b><ul>{dimension.missing.map((m, i) => <li key={i}>{m}</li>)}</ul></>}
+                    <p><b>建议：</b>{dimension.suggestion}</p>
+                  </div>)}
+                  <h3>需要核实的事实风险</h3>
+                  {currentEvaluation.fact_risks.length ? currentEvaluation.fact_risks.map((risk, i) => <div className="cardbox" key={i}><blockquote>{risk.quote}</blockquote><p>{risk.reason}</p><span className="note">来源事实：{risk.source_ids.join("、") || "未找到支持事实，需用户核实"}</span></div>) : <p className="note">本次未报告具体风险；这不等于内容已获得外部核实。</p>}
+                  {currentEvaluation.next_actions.length > 0 && <><h3>优先改进建议</h3><ol>{currentEvaluation.next_actions.map((action, i) => <li key={i}>{action}</li>)}</ol></>}
+                </>}
               </div>
             </>
           )}

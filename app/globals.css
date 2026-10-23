@@ -129,3 +129,15 @@ pre.out {
 .err { color: var(--bad); margin-top: 8px; }
 .note { color: var(--muted); font-size: 12.5px; }
 ul.warn { margin: 6px 0 0; padding-left: 18px; color: var(--warn); font-size: 13px; }
+
+.bullet-review { border-top: 1px solid var(--line); padding: 14px 0; }
+.review-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.review-panel { min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 12px; overflow-wrap: anywhere; }
+.review-panel h4 { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.source-fact { border-left: 2px solid var(--accent); padding-left: 10px; margin-bottom: 12px; }
+.source-fact p, .bullet-text { margin: 0 0 6px; white-space: pre-wrap; }
+.review-panel summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+.review-panel button { font-size: 12px; padding: 5px 9px; }
+
+.evaluation-section { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 18px; }
+.evaluation-section blockquote { margin: 8px 0; padding: 6px 10px; border-left: 2px solid var(--accent); overflow-wrap: anywhere; white-space: pre-wrap; font-size: 13px; }
