@@ -259,6 +259,20 @@ export default function Page() {
         <section className="card">
           <h2>2. 简历解析 → 经历库 Experience DB <Who kinds={["ai", "rule"]} /></h2>
           <p className="note">AI 把简历拆成「经历 → 卡片 → 格子」，只能照搬原文、不许添加；代码给每条事实打上状态和出处。CV 里的内容视为「已确认」（你自己写的）；对话中得到的数字先标「待确认」，需要你点确认才算数。</p>
+          {(db.education ?? []).map((e) => (
+            <div className="cardbox" key={e.id}>
+              <h3>{e.school} <span className="chip">{e.id}</span></h3>
+              <div className="org">
+                教育经历 · {[e.degree, e.field].filter(Boolean).join(", ") || "学位未写明"}
+                {(e.start_date || e.end_date) && ` · ${[e.start_date, e.end_date].filter(Boolean).join(" – ")}`}
+              </div>
+              {e.location && <div className="fact"><span className="f">地点</span>{e.location}</div>}
+              {e.gpa && <div className="fact"><span className="f">GPA</span>{e.gpa}</div>}
+              {e.details.map((d, i) => (
+                <div className="fact" key={i}><span className="f">补充</span>{d}</div>
+              ))}
+            </div>
+          ))}
           {db.cards.map((c) => {
             const aff = db.affiliations.find((a) => a.id === c.affiliation_id);
             return (

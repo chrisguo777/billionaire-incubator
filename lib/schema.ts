@@ -69,9 +69,23 @@ export interface Card {
   outcomes: Outcome[];
 }
 
+// 教育经历：单独存放，不拆成卡片。来自 CV 解析，视为用户已确认；只记录 CV 里写明的内容。
+export interface Education {
+  id: string;
+  school: string;
+  degree: string | null; // 学位，如 "M.S."、"B.A."
+  field: string | null; // 专业，如 "Biostatistics"
+  location: string | null;
+  start_date: string | null;
+  end_date: string | null; // 可以是 "expected 2027" 这类原文写法
+  gpa: string | null; // 保留原文写法，如 "3.9/4.0"
+  details: string[]; // 荣誉、相关课程、论文等，逐条照搬 CV
+}
+
 export interface ExperienceDB {
   affiliations: Affiliation[];
   cards: Card[];
+  education: Education[];
 }
 
 // ---------- LLM output schemas (Zod; ids are assigned by code afterwards) ----------
@@ -84,6 +98,18 @@ const OutcomeDraft = z.object({
 });
 
 export const ParsedCV = z.object({
+  education: z.array(
+    z.object({
+      school: z.string(),
+      degree: z.string().nullable(),
+      field: z.string().nullable(),
+      location: z.string().nullable(),
+      start_date: z.string().nullable(),
+      end_date: z.string().nullable(),
+      gpa: z.string().nullable(),
+      details: z.array(z.string()),
+    }),
+  ),
   affiliations: z.array(
     z.object({
       organization: z.string(),

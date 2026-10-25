@@ -17,6 +17,7 @@ import {
   RewriteOutput,
   type Asked,
   type Card,
+  type Education,
   type ExperienceDB,
   type Fact,
   type FactField,
@@ -41,6 +42,7 @@ function maxNum(db: ExperienceDB): number {
     c.outcomes.forEach((o) => bump(o.id));
   }
   db.affiliations.forEach((a) => bump(a.id));
+  (db.education ?? []).forEach((e) => bump(e.id));
   return max;
 }
 
@@ -87,15 +89,17 @@ export async function parseCV(cvText: string): Promise<ExperienceDB> {
           "Split each bullet into the right field: context (situation/problem), my_actions (what the candidate personally did), team_actions (what the team did), methods, tools, skills, scale (sizes, counts, durations), outcomes (results; value only if a number is stated).",
           "If a bullet describes team work without saying what the candidate did, put it in team_actions, not my_actions.",
           "Put the resume's skills section into one affiliation with type 'skills_list' and one card whose 'skills' field holds each skill.",
+          "Put degrees and schools into the separate 'education' list, never into affiliations. Fill gpa, location, dates and details (honors, relevant coursework, thesis) only when the resume states them; otherwise use null or an empty list. Keep the resume's wording for dates such as 'expected 2027'.",
           "Keep the original wording of each fact as close as possible.",
         ].join("\n"),
         cvText,
       )
     : mockParseCV();
 
-  const db: ExperienceDB = { affiliations: [], cards: [] };
+  const db: ExperienceDB = { affiliations: [], cards: [], education: [] };
   let n = 0;
   const id = (p: string) => `${p}${++n}`;
+  for (const e of parsed.education ?? []) db.education.push({ id: id("e"), ...e });
   for (const a of parsed.affiliations) {
     const aff = { id: id("a"), organization: a.organization, title: a.title, type: a.type, start_date: a.start_date, end_date: a.end_date };
     db.affiliations.push(aff);
@@ -241,7 +245,7 @@ export async function askQuestion(db: ExperienceDB, gap: Gap, req: Requirement, 
       "Never suggest numbers or claims for the user to adopt. Do not mention internal terms like status or gap.",
       "The user has already answered the earlier questions listed below. Never ask again about anything they already answered (including tools or topics they said they have not used); if the requirement overlaps with an earlier answer, narrow the question to what is still unknown, and do not mention tools or topics they already ruled out.",
     ].join("\n"),
-    `REQUIREMENT: ${req.text}\nSTATUS: ${gap.status}\nREASON: ${gap.reason}\n\nEARLIER QUESTIONS AND ANSWERS\n${earlier}\n\nRELATED EXPERIENCE\n${related.length ? renderDB({ affiliations: db.affiliations, cards: related }) : "(none)"}`,
+    `REQUIREMENT: ${req.text}\nSTATUS: ${gap.status}\nREASON: ${gap.reason}\n\nEARLIER QUESTIONS AND ANSWERS\n${earlier}\n\nRELATED EXPERIENCE\n${related.length ? renderDB({ affiliations: db.affiliations, cards: related, education: [] }) : "(none)"}`,
   );
   return out.question;
 }
@@ -409,6 +413,7 @@ export async function rewriteBullets(
 ): Promise<RewrittenCard[]> {
   const confirmedOnly: ExperienceDB = {
     affiliations: db.affiliations,
+    education: [],
     cards: db.cards
       .filter((c) => cardIds.includes(c.id))
       .map((c) => {
@@ -448,13 +453,31 @@ export interface ResumeOutput {
   coverage: Record<string, number>;
 }
 
+// 教育经历直接照搬 CV 解析结果，不经过 AI 改写，所以不需要事实校验。
+export function renderEducation(education: Education[]): string[] {
+  if (!education.length) return [];
+  const lines = ["## EDUCATION", ""];
+  for (const e of education) {
+    const degree = [e.degree, e.field].filter(Boolean).join(", ");
+    const dates = [e.start_date, e.end_date].filter(Boolean).join(" – ");
+    const head = [`**${e.school}**`, e.location].filter(Boolean).join(", ");
+    lines.push(`${head}${degree ? ` — ${degree}` : ""}${dates ? ` (${dates})` : ""}`);
+    if (e.gpa) lines.push(`- GPA: ${e.gpa}`);
+    for (const d of e.details) lines.push(`- ${d}`);
+    lines.push("");
+  }
+  return lines;
+}
+
 export function assembleResume(
   db: ExperienceDB,
   jd: JDAnalysis,
   gaps: Gap[],
   rewritten: RewrittenCard[],
 ): ResumeOutput {
-  const lines: string[] = [`# Targeted resume — ${jd.role_title}`, "", "## EXPERIENCE", ""];
+  const lines: string[] = [`# Targeted resume — ${jd.role_title}`, ""];
+  lines.push(...renderEducation(db.education ?? []));
+  lines.push("## EXPERIENCE", "");
   for (const rc of rewritten) {
     const card = db.cards.find((c) => c.id === rc.card_id);
     if (!card) continue;
