@@ -80,7 +80,8 @@ git push -u origin 你的名字/做什么
 | `lib/llm.ts` | 结构化输出调用（Anthropic SDK + Zod），live/mock 切换 |
 | `lib/mock.ts` | 无 Key 时的内置示例逻辑 |
 | `app/api/step/route.ts` | 无状态 API，状态由前端持有 |
-| `app/api/pdf/route.ts` | PDF 上传，用 unpdf 提取文字（≤10MB），结果填回左侧文本框供检查 |
+| `app/api/resume/route.ts` | PDF / Word（.docx）/ TXT 上传并提取文字（≤10MB）；PDF 用 unpdf，Word 用 mammoth，TXT 支持 UTF-8、带 BOM 的 UTF-16 和 GB18030，结果填回文本框供检查 |
+| `app/api/pdf/route.ts` | 原上传接口的兼容入口 |
 | `app/page.tsx` | 单页演示界面（每一步标注由「AI 模型」「代码规则」还是「你」完成） |
 
 ## 已实现的关键规则

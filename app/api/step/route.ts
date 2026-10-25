@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { EVALUATION_VERSION } from "@/lib/evaluation-schema";
+import { evaluateResume } from "@/lib/evaluation";
+import { reviewResume } from "@/lib/review";
 import { getMode } from "@/lib/llm";
 import {
   analyzeJD,
@@ -17,7 +20,7 @@ import type { Asked, ExperienceDB, Gap, JDAnalysis } from "@/lib/schema";
 export const maxDuration = 120;
 
 export async function GET() {
-  return NextResponse.json({ mode: getMode() });
+  return NextResponse.json({ mode: getMode(), evaluationVersion: EVALUATION_VERSION });
 }
 
 async function analyze(db: ExperienceDB, jd: JDAnalysis, asked: Asked) {
@@ -54,6 +57,19 @@ export async function POST(req: Request) {
         const applied = await applyAnswer(body.db, body.gap, requirement, body.question, body.answer, body.asked ?? {});
         const { matches, gaps } = await analyze(applied.db, jd, applied.asked);
         return NextResponse.json({ mode, ...applied, matches, gaps });
+      }
+      case "evaluate": {
+        const current = reviewResume(body.db, body.jd, body.gaps, body.rewritten, body.choices ?? {});
+        if (!current.resume.markdown.includes("\n- ")) {
+          return NextResponse.json({ error: "请先接受至少一条通过校验的经历描述，再进行质量评估" }, { status: 400 });
+        }
+        if (typeof body.cv !== "string" || !body.cv.trim()) {
+          return NextResponse.json({ error: "缺少原简历，无法进行前后对比" }, { status: 400 });
+        }
+        return NextResponse.json({ evaluation: await evaluateResume(body.cv, current.resume.markdown, body.db, body.jd) });
+      }
+      case "review": {
+        return NextResponse.json({ mode, ...reviewResume(body.db, body.jd, body.gaps, body.rewritten, body.choices ?? {}) });
       }
       case "finish": {
         const db: ExperienceDB = body.db;
