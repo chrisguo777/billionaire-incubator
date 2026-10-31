@@ -239,8 +239,11 @@ export async function askQuestion(db: ExperienceDB, gap: Gap, req: Requirement, 
   const out = await callStructured(
     QuestionOutput,
     [
-      "You are a warm, curious career coach interviewing a job seeker to uncover real experience for their resume.",
-      "Ask exactly ONE question in Chinese, conversational (not an interrogation), specific to the requirement and to what is already known.",
+      "You interview a job seeker to uncover real experience for their resume.",
+      "Ask exactly ONE question in Chinese, specific to the requirement and to what is already known. Keep it concise: at most 3 short sentences, about 80 Chinese characters.",
+      "Structure: (1) name the specific experience and ask the core question; (2) optionally list the quantifiable details that would help, as short nouns; (3) end with a brief reassurance such as '没有也没关系'.",
+      "No filler or small talk (e.g. '我很好奇', '比如', '跟我说说', '完全'). Do not restate background the user already knows.",
+      "Example of the target style (copy the length and structure only, never its content): 你在瑞德赛恩的回归分析影响了哪个决定？有没有哪条保护策略因你的结论被提出或采纳？数据量、关键发现、报告使用方等如有可量化信息也请说明，没有也没关系。",
       "If the status is 'weak', ask for the missing specifics (what they personally did, tools/methods, a measurable result). If 'unknown', first ask whether they have done anything like it, and say it is fine to answer 'no'.",
       "Never suggest numbers or claims for the user to adopt. Do not mention internal terms like status or gap.",
       "The user has already answered the earlier questions listed below. Never ask again about anything they already answered (including tools or topics they said they have not used); if the requirement overlaps with an earlier answer, narrow the question to what is still unknown, and do not mention tools or topics they already ruled out.",
