@@ -1,3 +1,4 @@
+import { isResumeSortMode, orderResumeCards } from "@/lib/resume-order";
 import { NextResponse } from "next/server";
 import { EVALUATION_VERSION } from "@/lib/evaluation-schema";
 import { evaluateResume } from "@/lib/evaluation";
@@ -32,6 +33,8 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const mode = getMode();
+    const sortMode = body.sortMode ?? "relevance";
+    if (!isResumeSortMode(sortMode)) return NextResponse.json({ error: "排序方式无效，请选择 JD 匹配度或经历时间" }, { status: 400 });
     switch (body.step) {
       case "parse": {
         return NextResponse.json({ mode, db: await parseCV(body.cv) });
@@ -59,7 +62,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ mode, ...applied, matches, gaps });
       }
       case "evaluate": {
-        const current = reviewResume(body.db, body.jd, body.gaps, body.rewritten, body.choices ?? {});
+        const current = reviewResume(body.db, body.jd, body.gaps, body.rewritten, body.choices ?? {}, sortMode);
         if (!current.resume.markdown.includes("\n- ")) {
           return NextResponse.json({ error: "请先接受至少一条通过校验的经历描述，再进行质量评估" }, { status: 400 });
         }
@@ -69,19 +72,20 @@ export async function POST(req: Request) {
         return NextResponse.json({ evaluation: await evaluateResume(body.cv, current.resume.markdown, body.db, body.jd) });
       }
       case "review": {
-        return NextResponse.json({ mode, ...reviewResume(body.db, body.jd, body.gaps, body.rewritten, body.choices ?? {}) });
+        return NextResponse.json({ mode, ...reviewResume(body.db, body.jd, body.gaps, body.rewritten, body.choices ?? {}, sortMode) });
       }
       case "finish": {
         const db: ExperienceDB = body.db;
         const jd: JDAnalysis = body.jd;
         const gaps: Gap[] = body.gaps;
-        const ranked = rankCards(db, jd, gaps);
+        const candidates = rankCards(db, jd, gaps);
+        const ranked = orderResumeCards(candidates, db, sortMode, candidates);
         const rewritten = await rewriteBullets(
           db,
           jd,
           ranked.filter((r) => r.included).map((r) => r.card_id),
         );
-        return NextResponse.json({ mode, ranked, rewritten, resume: assembleResume(db, jd, gaps, rewritten) });
+        return NextResponse.json({ mode, ranked, rewritten: orderResumeCards(rewritten, db, sortMode, ranked), resume: assembleResume(db, jd, gaps, rewritten, sortMode) });
       }
       default:
         return NextResponse.json({ error: `unknown step: ${body.step}` }, { status: 400 });

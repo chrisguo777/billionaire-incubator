@@ -1,10 +1,11 @@
-import { assembleResume, checkBullet, type RewrittenCard } from "./pipeline";
+import { orderResumeCards, type ResumeSortMode } from "./resume-order";
+import { assembleResume, checkBullet, rankCards, type RewrittenCard } from "./pipeline";
 import type { ExperienceDB, Gap, JDAnalysis } from "./schema";
 
 import { bulletKey, type ReviewChoices } from "./review-types";
 
 // Recheck user edits with the same rules as generated bullets; never trust client ok flags.
-export function reviewResume(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[], original: RewrittenCard[], choices: ReviewChoices) {
+export function reviewResume(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[], original: RewrittenCard[], choices: ReviewChoices, sortMode: ResumeSortMode = "relevance") {
   const rewritten = original.map((card) => ({
     ...card,
     bullets: card.bullets.map((bullet, index) => {
@@ -19,5 +20,5 @@ export function reviewResume(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[], orig
     ...card,
     bullets: card.bullets.filter((b, i) => b.ok && choices[bulletKey(card.card_id, i)]?.status === "accepted"),
   }));
-  return { rewritten, resume: assembleResume(db, jd, gaps, accepted) };
+  return { rewritten: orderResumeCards(rewritten, db, sortMode, rankCards(db, jd, gaps)), resume: assembleResume(db, jd, gaps, accepted, sortMode) };
 }

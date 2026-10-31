@@ -1,3 +1,4 @@
+import { orderResumeCards, type ResumeSortMode } from "./resume-order";
 import { callStructured, getMode } from "./llm";
 import {
   mockAnalyzeJD,
@@ -474,11 +475,12 @@ export function assembleResume(
   jd: JDAnalysis,
   gaps: Gap[],
   rewritten: RewrittenCard[],
+  sortMode: ResumeSortMode = "relevance",
 ): ResumeOutput {
   const lines: string[] = [`# Targeted resume — ${jd.role_title}`, ""];
   lines.push(...renderEducation(db.education ?? []));
   lines.push("## EXPERIENCE", "");
-  for (const rc of rewritten) {
+  for (const rc of orderResumeCards(rewritten, db, sortMode, rankCards(db, jd, gaps))) {
     const card = db.cards.find((c) => c.id === rc.card_id);
     if (!card) continue;
     const aff = db.affiliations.find((a) => a.id === card.affiliation_id);

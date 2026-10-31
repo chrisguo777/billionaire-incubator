@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { SORT_LABELS, orderResumeCards, type ResumeSortMode } from "@/lib/resume-order";
 import { SAMPLE_CV, SAMPLE_JD } from "@/lib/sample";
 import { DIMENSIONS, type EvaluationReport } from "@/lib/evaluation-schema";
 import { bulletKey, type ReviewChoices } from "@/lib/review-types";
@@ -81,6 +82,7 @@ export default function Page() {
   const [pending, setPending] = useState<Pending | null>(null);
   const [interviewDone, setInterviewDone] = useState(false);
   const [answer, setAnswer] = useState("");
+  const [sortMode, setSortMode] = useState<ResumeSortMode>("relevance");
   const [result, setResult] = useState<FinishResult | null>(null);
   const [choices, setChoices] = useState<ReviewChoices>({});
   const [reviewed, setReviewed] = useState<{ rewritten: RewrittenCard[]; resume: ResumeOutput } | null>(null);
@@ -216,8 +218,8 @@ export default function Page() {
   async function finish() {
     if (!db || !jd) return;
     await guard("选择经历、改写 bullet、检查事实…", async () => {
-      const generated = await call<FinishResult>({ step: "finish", db, jd, gaps });
-      const initial = await call<{ rewritten: RewrittenCard[]; resume: ResumeOutput }>({ step: "review", db, jd, gaps, rewritten: generated.rewritten, choices: {} });
+      const generated = await call<FinishResult>({ step: "finish", db, jd, gaps, sortMode });
+      const initial = await call<{ rewritten: RewrittenCard[]; resume: ResumeOutput }>({ step: "review", db, jd, gaps, sortMode, rewritten: generated.rewritten, choices: {} });
       setResult(generated);
       setChoices({});
       setEditing(null);
@@ -230,13 +232,26 @@ export default function Page() {
     await guard("更新审阅结果…", async () => {
       const next = { ...choices, [key]: { text, status } };
       const response = await call<{ rewritten: RewrittenCard[]; resume: ResumeOutput }>({
-        step: "review", db, jd, gaps, rewritten: result.rewritten, choices: next,
+        step: "review", db, jd, gaps, sortMode, rewritten: result.rewritten, choices: next,
       });
       setChoices(next);
       setReviewed(response);
       setEditing(null);
     });
   }
+
+  async function changeSortMode(next: ResumeSortMode) {
+    if (!result || !db || !jd) { setSortMode(next); return; }
+    await guard("更新简历排序…", async () => {
+      const response = await call<{ rewritten: RewrittenCard[]; resume: ResumeOutput }>({
+        step: "review", db, jd, gaps, sortMode: next, rewritten: result.rewritten, choices,
+      });
+      setSortMode(next);
+      setReviewed(response);
+    });
+  }
+  const orderedRanked = result && db ? orderResumeCards(result.ranked, db, sortMode, result.ranked) : [];
+  const orderedRewritten = result && db ? orderResumeCards(result.rewritten, db, sortMode, result.ranked) : [];
 
   const sources = useMemo(() => {
     const index = new Map<string, { text: string; field: string; source: string; status: string; card: string }>();
@@ -254,13 +269,13 @@ export default function Page() {
   const acceptedCount = (reviewed?.rewritten ?? []).reduce((n, c) => n + c.bullets.filter((b, i) => b.ok && choices[bulletKey(c.card_id, i)]?.status === "accepted").length, 0);
   const totalBullets = result?.rewritten.reduce((n, c) => n + c.bullets.length, 0) ?? 0;
 
-  const evaluationSignature = JSON.stringify({ cv, jdText, db, jd, gaps, rewritten: result?.rewritten, choices });
+  const evaluationSignature = JSON.stringify({ cv, jdText, db, jd, gaps, sortMode, rewritten: result?.rewritten, choices });
   const currentEvaluation = evaluation?.signature === evaluationSignature ? evaluation.report : null;
   async function runEvaluation() {
     if (!db || !jd || !result || acceptedCount === 0) return;
     const signature = evaluationSignature;
     await guard("正在评估简历质量…", async () => {
-      const response = await call<{ evaluation: EvaluationReport }>({ step: "evaluate", cv, db, jd, gaps, rewritten: result.rewritten, choices });
+      const response = await call<{ evaluation: EvaluationReport }>({ step: "evaluate", cv, db, jd, gaps, sortMode, rewritten: result.rewritten, choices });
       setEvaluation({ signature, report: response.evaluation });
     });
   }
@@ -423,6 +438,13 @@ export default function Page() {
           <p className="note">
             <b>代码规则</b>按覆盖了多少高优先级要求给经历打分、选材；<b>AI</b>只用「已确认」的事实改写 bullet，并标明依据哪几条事实；<b>代码规则</b>再检查：没有来源、引用未确认事实、或出现事实里没有的数字，该条就被拦截，不进简历。
           </p>
+          <fieldset className="resume-sort" disabled={!!busy || editing !== null}>
+            <legend>最终简历的经历排序</legend>
+            {(["relevance", "chronological"] as const).map((value) => <label key={value}>
+              <input type="radio" name="resume-sort" value={value} checked={sortMode === value} onChange={() => changeSortMode(value)} /> {SORT_LABELS[value]}
+            </label>)}
+            <p className="note">{sortMode === "relevance" ? "优先展示与目标 JD 更相关的经历。" : "正在进行的经历优先，再按结束、开始时间倒序；日期未知的放最后，同日期按 JD 匹配度排列。项目沿用所属经历的日期。"} 切换排序会保留已接受的条目和编辑，不会重新调用 AI。入选经历仍按 JD 匹配度选择。</p>
+          </fieldset>
           <div className="row">
             <button onClick={finish} disabled={!!busy}>生成简历</button>
             {busy && <span className="note">{busy}</span>}
@@ -431,12 +453,13 @@ export default function Page() {
             <>
               <h2 style={{ marginTop: 16 }}>经历选择与排序</h2>
               <table>
-                <thead><tr><th>经历</th><th>得分</th><th>是否入选</th><th>理由</th></tr></thead>
+                <thead><tr><th>经历</th><th>JD 匹配得分</th><th>经历时间</th><th>是否入选</th><th>理由</th></tr></thead>
                 <tbody>
-                  {result.ranked.map((r) => (
+                  {orderedRanked.map((r) => (
                     <tr key={r.card_id}>
                       <td>{cardName(r.card_id)}</td>
                       <td>{r.score}</td>
+                      <td>{(() => { const card = db?.cards.find((c) => c.id === r.card_id); const aff = db?.affiliations.find((a) => a.id === card?.affiliation_id); return [aff?.start_date, aff?.end_date].filter(Boolean).join(" – ") || "日期未知"; })()}</td>
                       <td>{r.included ? "入选" : "落选"}</td>
                       <td className="note">{r.reasons.join("；") || "与 JD 要求的匹配度低"}</td>
                     </tr>
@@ -447,7 +470,7 @@ export default function Page() {
               <h2 style={{ marginTop: 16 }}>改写对照与逐条审阅</h2>
               <p className="note" role="status">共 {totalBullets} 条，已接受 {acceptedCount} 条。只有已接受且通过规则校验的内容才进入下方简历。</p>
               <p className="note">左侧是经历库中抽取的事实，接近原文但不等同于原始简历逐字内容。规则校验只检查来源、确认状态和数字；请同时核实职责和个人贡献是否准确。</p>
-              {result.rewritten.map((rc) => (
+              {orderedRewritten.map((rc) => (
                 <div className="cardbox" key={rc.card_id}>
                   <h3>{cardName(rc.card_id)}</h3>
                   {rc.bullets.map((original, i) => {
@@ -493,6 +516,7 @@ export default function Page() {
 
               <h2 style={{ marginTop: 16 }}>最终简历（Markdown）</h2>
               <p className="note">{acceptedCount ? `当前简历包含 ${acceptedCount} 条已接受的经历描述。` : "请先接受上方至少一条描述，经历部分才会写入简历。"}</p>
+              <p className="note">当前排序：{SORT_LABELS[sortMode]}</p>
               <pre className="out">{preview?.markdown}</pre>
               <p className="note">
                 JD 覆盖：已覆盖 {preview?.coverage.covered} · 偏弱 {preview?.coverage.weak} · 未知 {preview?.coverage.unknown} · 真缺口 {preview?.coverage.true_gap}
