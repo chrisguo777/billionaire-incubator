@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { EMPTY_CONTACT, PRIVACY_NOTICE, contactLines, redactPayload, redactText, validateContact, type Contact, type ContactMode } from "@/lib/privacy";
 import { SAMPLE_CV, SAMPLE_JD } from "@/lib/sample";
 import { DIMENSIONS, type EvaluationReport } from "@/lib/evaluation-schema";
 import { bulletKey, type ReviewChoices } from "@/lib/review-types";
@@ -46,7 +47,7 @@ interface FinishResult {
   resume: ResumeOutput;
 }
 
-async function call<T>(body: Record<string, unknown>): Promise<T> {
+async function requestStep<T>(body: Record<string, unknown>): Promise<T> {
   const res = await fetch("/api/step", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -70,6 +71,30 @@ function Who({ kinds }: { kinds: ("ai" | "rule" | "user")[] }) {
 }
 
 export default function Page() {
+  const [contactMode, setContactMode] = useState<ContactMode | null>(null);
+  const [contact, setContact] = useState<Contact>({ ...EMPTY_CONTACT });
+  const [sourceReviewed, setSourceReviewed] = useState(false);
+  const [downloadAcknowledged, setDownloadAcknowledged] = useState(false);
+
+  function selectContactMode(next: ContactMode) {
+    if (next === contactMode) return;
+    // Never carry an old identity or generated draft across a privacy-mode switch.
+    if (next === "private") {
+      setCv((text) => redactText(text, contact));
+      setAnswer((text) => redactText(text, contact));
+      setJdText((text) => redactText(text, contact));
+      setContact({ ...EMPTY_CONTACT });
+    }
+    setContactMode(next); setSourceReviewed(false); setDownloadAcknowledged(false);
+    setDb(null); setJd(null); setResult(null); setReviewed(null); setChoices({});
+    setTurns([]); setPending(null); setGaps([]); setAsked({}); setInterviewDone(false); setEvaluation(null); setError(null);
+  }
+
+  async function call<T>(body: Record<string, unknown>): Promise<T> {
+    // Contact details stay out of every model workflow request, including evaluation and answers.
+    return requestStep<T>(redactPayload(body, contact));
+  }
+
   const [mode, setMode] = useState<"live" | "mock" | null>(null);
   const [cv, setCv] = useState(SAMPLE_CV);
   const [jdText, setJdText] = useState(SAMPLE_JD);
@@ -110,6 +135,10 @@ export default function Page() {
   }
 
   async function runAnalysis() {
+    if (!contactMode) { setError("请先选择个人信息使用模式。"); return; }
+    if (contactMode === "full") {
+      const issue = validateContact(contact); if (issue) { setError(issue); return; }
+    } else if (!sourceReviewed) { setError("请先确认已检查简历文字中的个人信息。"); return; }
     await guard("解析简历和 JD…", async () => {
       setTurns([]);
       setAsked({});
@@ -135,7 +164,8 @@ export default function Page() {
       const res = await fetch("/api/resume", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "简历上传失败");
-      setCv(data.text);
+      setCv(redactText(data.text, contact));
+      setSourceReviewed(false);
       setUploadInfo(`已从 ${data.name} 提取文字${data.pages ? `（${data.pages} 页）` : ""}，请检查下方文本是否完整`);
     });
   }
@@ -265,6 +295,28 @@ export default function Page() {
     });
   }
 
+  const identityLines = contactMode ? contactLines(contactMode, contact) : [];
+  const personalIssue = contactMode === "full" ? validateContact(contact) : null;
+  const finalMarkdown = preview ? [...identityLines.map((line, i) => i === 0 ? `# ${line}` : line), "", preview.markdown.replace(/^# .*\n?/, "")].join("\n") : "";
+  const canExport = !!contactMode && !busy && acceptedCount > 0 && editing === null && !personalIssue && (contactMode !== "private" || downloadAcknowledged);
+
+  async function downloadWord() {
+    if (!canExport || !db || !jd || !result) return;
+    await guard("生成 Word 简历…", async () => {
+      const response = await fetch("/api/export", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...redactPayload({ db, jd, gaps, rewritten: result.rewritten, choices }, contact),
+          mode: contactMode, ...(contactMode === "full" ? { contact } : {}), acknowledged: downloadAcknowledged }),
+      });
+      if (!response.ok) throw new Error((await response.json()).error ?? "Word 导出失败");
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a"); anchor.href = url;
+      anchor.download = contactMode === "private" ? "Resume-待填写个人信息.docx" : "Resume.docx";
+      document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+  }
+
   const reqText = (id: string) => jd?.requirements.find((r) => r.id === id)?.text ?? id;
   const cardName = (id: string) => db?.cards.find((c) => c.id === id)?.name ?? id;
 
@@ -277,6 +329,23 @@ export default function Page() {
         CV + JD → 解析 → JD 匹配 → 缺口检测 → 针对性追问 → 选材排序 → 改写 → 定制简历。只有「已确认」的事实才会进入简历。
       </p>
 
+      <section className="card privacy-settings">
+        <h2>个人信息使用模式</h2>
+        <p className="note">请先选择。个人信息仅保存在当前页面内存中，刷新后清除；填写的联系方式仅用于预览和 Word 组装，不发送给模型。上传原文件仍会发送到本平台进行文字提取。</p>
+        <fieldset disabled={!!busy}>
+          <legend>选择制作方式</legend>
+          <label className="mode-option"><input type="radio" name="contact-mode" checked={contactMode === "full"} onChange={() => selectContactMode("full")} /> 完整信息模式：我同意提供真实联系方式，生成完整简历</label>
+          <label className="mode-option"><input type="radio" name="contact-mode" checked={contactMode === "private"} onChange={() => selectContactMode("private")} /> 隐私占位模式：下载 Word 后在本地填写个人信息</label>
+        </fieldset>
+        {contactMode === "full" && <div className="contact-grid">{([
+          ["name", "姓名", "text"], ["email", "邮箱", "email"], ["phone", "电话", "tel"], ["link", "个人链接（可选）", "text"],
+        ] as const).map(([key, label, type]) => <label key={key}>{label}<input type={type} value={contact[key]} maxLength={key === "link" ? 500 : key === "email" ? 254 : key === "name" ? 120 : 80} disabled={!!busy} autoComplete="off" onChange={(e) => { setContact({ ...contact, [key]: e.target.value }); setDownloadAcknowledged(false); }} /></label>)}
+          <p className="note">姓名、邮箱和电话用于完整导出；请勿在经历正文或回答中重复填写。真实信息仅在下载时交给本平台的 Word 组装接口。</p>
+        </div>}
+        {contactMode === "private" && <div className="privacy-warning" role="note"><b>下载后必须填写个人信息</b><p>{PRIVACY_NOTICE}</p><p>预览与 Word 将使用黄色高亮的 <mark>[YOUR NAME]</mark>、<mark>[YOUR EMAIL]</mark>、<mark>[YOUR PHONE]</mark>，可选链接省略。</p><p>请在上传前删除原文件中的姓名、联系方式等隐私信息。系统可辅助遮盖邮箱和常见电话，不能可靠识别所有姓名、地址或其他身份线索；请自行检查。</p></div>}
+        <p className="note">切换模式会重置已生成结果和审阅记录；切换到隐私模式会清空已填写的联系方式。</p>
+      </section>
+
       <section className="card">
         <h2>1. 输入：简历 CV 与目标 JD <Who kinds={["user"]} /></h2>
         <p className="note">你提供原材料。上传文件的文字提取由代码完成，不用 AI。点「解析并分析」后，AI 会依次完成第 2、3 步。</p>
@@ -286,7 +355,7 @@ export default function Page() {
             <input
               type="file"
               accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
-              disabled={!!busy}
+              disabled={!!busy || !contactMode}
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) uploadResume(f);
@@ -297,14 +366,18 @@ export default function Page() {
           <span className="note">{uploadInfo ?? "支持 PDF、Word（.docx）和 TXT，每个文件不超过 10MB。扫描件暂不支持，也可以直接粘贴文字。"}</span>
         </div>
         <div className="grid2">
-          <textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} aria-label="CV" />
+          <textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); setSourceReviewed(false); }} aria-label="CV" />
           <textarea value={jdText} onChange={(e) => setJdText(e.target.value)} aria-label="JD" />
         </div>
+        {contactMode === "private" && <>
+          <button className="ghost" disabled={!!busy} onClick={() => { setCv(redactText(cv)); setSourceReviewed(false); }}>辅助遮盖邮箱与常见电话</button>
+          <label className="mode-option"><input type="checkbox" checked={sourceReviewed} disabled={!!busy} onChange={(e) => setSourceReviewed(e.target.checked)} /> 我已检查上方简历文字，并移除不希望发送给模型的姓名、联系方式和其他身份信息。</label>
+        </>}
         {mode === "mock" && (
           <p className="note">Mock 模式只认识内置的示例 CV/JD；换成别的文本需要配置 ANTHROPIC_API_KEY（见 README）。</p>
         )}
         <div className="row">
-          <button onClick={runAnalysis} disabled={!!busy}>解析并分析</button>
+          <button onClick={runAnalysis} disabled={!!busy || !contactMode || (contactMode === "private" && !sourceReviewed)}>解析并分析</button>
           {busy && <span className="note">{busy}</span>}
         </div>
         {error && <div className="err">出错：{error}</div>}
@@ -491,9 +564,11 @@ export default function Page() {
                 </div>
               ))}
 
-              <h2 style={{ marginTop: 16 }}>最终简历（Markdown）</h2>
+              <h2 style={{ marginTop: 16 }}>简历预览与 Word 下载</h2>
               <p className="note">{acceptedCount ? `当前简历包含 ${acceptedCount} 条已接受的经历描述。` : "请先接受上方至少一条描述，经历部分才会写入简历。"}</p>
-              <pre className="out">{preview?.markdown}</pre>
+              <div className="identity-preview" aria-label="个人信息预览">{identityLines.map((line, i) => <div key={i}>{contactMode === "private" ? <mark>{line}</mark> : (line || "待填写")}</div>)}</div>
+              <pre className="out">{preview?.markdown.replace(/^# .*\n?/, "")}</pre>
+              {contactMode === "private" ? <div className="privacy-warning"><b>个人信息待本地填写 · 不能直接投递</b><p>{PRIVACY_NOTICE}</p><label className="mode-option"><input type="checkbox" checked={downloadAcknowledged} onChange={(e) => setDownloadAcknowledged(e.target.checked)} /> 我知道该文件尚未完成，提交申请前须自行替换所有黄色占位信息，并自行承担遗漏填写的风险。</label></div> : personalIssue && <p className="err">{personalIssue}</p>}
               <p className="note">
                 JD 覆盖：已覆盖 {preview?.coverage.covered} · 偏弱 {preview?.coverage.weak} · 未知 {preview?.coverage.unknown} · 真缺口 {preview?.coverage.true_gap}
               </p>
@@ -501,7 +576,8 @@ export default function Page() {
                 <ul className="warn">{preview?.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
               )}
               <div className="row">
-                <button className="ghost" disabled={!!busy || acceptedCount === 0 || editing !== null} onClick={() => preview && navigator.clipboard.writeText(preview.markdown)}>复制 Markdown</button>
+                <button disabled={!canExport} onClick={downloadWord}>下载 Word{contactMode === "private" ? "（待填写个人信息）" : ""}</button>
+                {contactMode === "full" && <button className="ghost" disabled={!canExport} onClick={() => navigator.clipboard.writeText(finalMarkdown)}>复制 Markdown</button>}
               </div>
               <div className="evaluation-section">
                 <h2>简历质量评估 <Who kinds={["ai", "rule"]} /></h2>

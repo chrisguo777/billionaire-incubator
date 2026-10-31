@@ -1,3 +1,4 @@
+import { redactPayload, EMPTY_CONTACT } from "@/lib/privacy";
 import { NextResponse } from "next/server";
 import { EVALUATION_VERSION } from "@/lib/evaluation-schema";
 import { evaluateResume } from "@/lib/evaluation";
@@ -30,7 +31,7 @@ async function analyze(db: ExperienceDB, jd: JDAnalysis, asked: Asked) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const body = redactPayload(await req.json(), EMPTY_CONTACT);
     const mode = getMode();
     switch (body.step) {
       case "parse": {

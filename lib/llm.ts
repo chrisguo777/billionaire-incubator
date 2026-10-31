@@ -1,3 +1,4 @@
+import { redactText } from "./privacy";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
@@ -28,7 +29,7 @@ export async function callStructured<S extends z.ZodType>(
     model: MODEL,
     max_tokens: 16000,
     system,
-    messages: [{ role: "user", content: user }],
+    messages: [{ role: "user", content: redactText(user) }],
     output_config: { effort, format: zodOutputFormat(schema) },
   });
   if (response.stop_reason === "refusal") {
