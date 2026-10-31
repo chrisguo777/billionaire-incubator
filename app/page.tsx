@@ -198,8 +198,14 @@ export default function Page() {
       setAsked(r.asked);
       setGaps(r.gaps);
       setAnswer("");
+      setBusy("生成下一条追问…");
       await nextQuestion(r.db, r.gaps, r.asked, turns.length + 1, [...turns, turn]);
     });
+  }
+
+  async function retryNextQuestion() {
+    if (!db || !jd || pending || interviewDone) return;
+    await guard("生成下一条追问…", () => nextQuestion(db, gaps, asked, turns.length, turns));
   }
 
   async function confirmOutcome(outcomeId: string) {
@@ -388,7 +394,7 @@ export default function Page() {
         </section>
       )}
 
-      {(turns.length > 0 || pending) && (
+      {(turns.length > 0 || pending || interviewDone) && (
         <section className="card">
           <h2>4. 针对性追问（最多 {MAX_QUESTIONS} 题） <Who kinds={["rule", "ai", "user"]} /></h2>
           <p className="note">
@@ -413,11 +419,20 @@ export default function Page() {
               </div>
             </div>
           )}
+          {!pending && !interviewDone && turns.length > 0 && (
+            busy ? <p className="note" role="status">正在准备下一条追问，请稍候…</p> : <>
+              <p className="err" role="alert">{error ?? "下一条追问暂未加载，请重试。"}</p>
+              <div className="row">
+                <button onClick={retryNextQuestion}>重试获取下一题</button>
+                <button className="ghost" onClick={() => { setPending(null); setInterviewDone(true); }}>跳过剩余问题</button>
+              </div>
+            </>
+          )}
           {interviewDone && <p className="note">追问结束。</p>}
         </section>
       )}
 
-      {jd && (interviewDone || turns.length > 0) && !pending && (
+      {jd && interviewDone && !pending && (
         <section className="card">
           <h2>5. 选材排序 · 改写 · 生成简历 <Who kinds={["rule", "ai", "rule"]} /></h2>
           <p className="note">
