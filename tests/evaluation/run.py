@@ -12,6 +12,8 @@ def fixture(case_id, original, rewritten, action, outcome):
     card['my_actions']=[{'id':'f1','text':action,'status':'user_confirmed','source':'cv_parse'}]
     card['outcomes']=[{'id':'o1','note':outcome,'value':None,'unit':None,'basis':None,'status':'user_confirmed','source':'cv_parse'}]
     body={'step':'evaluate','cv':original,'db':{'affiliations':[{'id':'a1','organization':'Example Company','title':'Analyst Intern','type':'intern','start_date':None,'end_date':None}],'cards':[card]},'jd':{'role_title':'Data Analyst','domain':'Analytics','seniority':'Entry','requirements':[{'id':'r1','text':'Build Python reports to help operations teams make decisions','kind':'responsibility','priority':'high','keywords':['python','reporting','operations']}]},'gaps':[],'rewritten':[{'card_id':'c1','bullets':[{'original_bullet_id':'cvb1','text':rewritten,'source_ids':['f1','o1'],'ok':True,'issues':[]}]}],'choices':{'c1:cvb1':{'text':rewritten,'status':'accepted'}}}
+    # Fixed single-project fixtures contain no additional experiences to discover.
+    body['discovery']={'exhausted':True}
     return {'id':case_id,'body':body}
 
 CASES=[

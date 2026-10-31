@@ -125,7 +125,7 @@ process.env.LLM_MODE = 'mock';
     assert.equal(collision.stats.accepted, 0);
   });
   test('new dialogue bullet requires acceptance; sorting preserves choices and source IDs', () => {
-    const newKey = bulletKey('c1', 2);
+    const newKey = bulletKey('c1', 2, null, ['dialogue1']);
     const choices = { [key]: { text: revised, status: 'accepted' }, [newKey]: { text: 'Documented a dashboard handover guide.', status: 'accepted' } };
     const a = review(choices), b = review(choices, 'chronological');
     assert.equal(a.stats.accepted, 2); assert.equal(b.stats.accepted, 2);

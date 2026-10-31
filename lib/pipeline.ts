@@ -1,4 +1,5 @@
 import { orderResumeCards, type ResumeSortMode } from "./resume-order";
+import type { CardEvidenceStatus } from "./resume-selection";
 import { extractOriginalBullets, normalizedBullet, renderOriginalBullets, uniqueOriginals } from "./original-bullets";
 import { SAMPLE_CV } from "./sample";
 import { callStructured, getMode } from "./llm";
@@ -387,13 +388,13 @@ export async function applyAnswer(
 // ---------- 10: Selection & ranking ----------
 
 const WEIGHT = { high: 3, medium: 2, low: 1 } as const;
-const MAX_CARDS = 4;
 
 export interface RankedCard {
   card_id: string;
   score: number;
   included: boolean;
   reasons: string[];
+  evidence_status: CardEvidenceStatus;
 }
 
 export function rankCards(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[]): RankedCard[] {
@@ -402,22 +403,32 @@ export function rankCards(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[]): Ranked
     .filter((c) => db.affiliations.find((a) => a.id === c.affiliation_id)?.type !== "skills_list")
     .map((card) => {
       let score = 0;
+      let supported = false;
+      let insufficient = false;
       const reasons: string[] = [];
       for (const g of gaps) {
-        if (g.status !== "covered" && g.status !== "weak") continue;
-        const hits = g.evidence_fact_ids.filter((id) => index.get(id)?.card.id === card.id);
-        if (!hits.length) continue;
-        const req = jd.requirements.find((r) => r.id === g.requirement_id)!;
-        const w = WEIGHT[req.priority] * (g.status === "covered" ? 1 : 0.5);
-        score += w;
-        reasons.push(`${g.status === "covered" ? "覆盖" : "部分覆盖"}：${req.text}`);
+        if (g.status === "true_gap") continue;
+        const req = jd.requirements.find((r) => r.id === g.requirement_id);
+        if (!req) continue;
+        const hits = g.evidence_fact_ids.filter((id) => {
+          const located = index.get(id);
+          return located?.card.id === card.id && (located.kind === "fact" ? located.fact.status : located.outcome.status) === "user_confirmed";
+        });
+        if (hits.length && (g.status === "covered" || g.status === "weak")) {
+          score += WEIGHT[req.priority] * (g.status === "covered" ? 1 : 0.5);
+          supported ||= g.status === "covered";
+          insufficient ||= g.status === "weak";
+          reasons.push(`${g.status === "covered" ? "覆盖" : "证据不足，部分覆盖"}：${req.text}`);
+        } else if (g.related_card_ids.includes(card.id)) {
+          insufficient = true;
+          reasons.push(`相关但证据不足：${req.text}`);
+        }
       }
-      return { card_id: card.id, score, included: false, reasons };
+      const evidence_status: CardEvidenceStatus = supported ? "supported" : insufficient ? "insufficient" : "unmatched";
+      if (!reasons.length) reasons.push("暂未找到与 JD 直接匹配的证据，可自行选择是否保留");
+      return { card_id: card.id, score, included: true, reasons, evidence_status };
     })
     .sort((a, b) => b.score - a.score);
-  ranked.forEach((r, i) => {
-    r.included = r.score > 0 && i < MAX_CARDS;
-  });
   return ranked;
 }
 
@@ -551,6 +562,7 @@ export interface ResumeOutput {
   warnings: string[];
   coverage: Record<string, number>;
   experienceBulletCount: number;
+  experienceCount: number;
 }
 
 // 教育经历直接照搬 CV 解析结果，不经过 AI 改写，所以不需要事实校验。
@@ -580,6 +592,7 @@ export function assembleResume(
   lines.push(...renderEducation(db.education ?? []));
   lines.push("## EXPERIENCE", "");
   let experienceBulletCount = 0;
+  let experienceCount = 0;
   const seen = new Set<string>();
   for (const rc of orderResumeCards(rewritten, db, sortMode, rankCards(db, jd, gaps))) {
     const card = db.cards.find((c) => c.id === rc.card_id);
@@ -593,6 +606,7 @@ export function assembleResume(
       seen.add(key); return true;
     });
     if (!okBullets.length) continue;
+    experienceCount++;
     lines.push(`**${card.name}** — ${[aff?.title, aff?.organization].filter(Boolean).join(", ")}${dates ? ` (${dates})` : ""}`);
     for (const b of okBullets) { lines.push(`- ${b.text.replace(/\s*\n\s*/g, " ")}`); experienceBulletCount++; }
     lines.push("");
@@ -609,5 +623,5 @@ export function assembleResume(
   for (const c of db.cards) for (const o of c.outcomes) if (o.status !== "user_confirmed") warnings.push(`「${c.name}」里的结果「${o.note}」尚未确认，没有写入简历`);
   const coverage: Record<string, number> = { covered: 0, weak: 0, unknown: 0, true_gap: 0 };
   for (const g of gaps) coverage[g.status]++;
-  return { markdown: lines.join("\n"), warnings, coverage, experienceBulletCount };
+  return { markdown: lines.join("\n"), warnings, coverage, experienceBulletCount, experienceCount };
 }

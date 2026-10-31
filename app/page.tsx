@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { SORT_LABELS, orderResumeCards, type ResumeSortMode } from "@/lib/resume-order";
+import { CARD_EVIDENCE_LABELS } from "@/lib/resume-selection";
+import { countExperiences, needsExperienceDiscovery, TARGET_EXPERIENCES, type ExperienceDiscoveryState } from "@/lib/experience-target";
 import { SAMPLE_CV, SAMPLE_JD } from "@/lib/sample";
 import { DIMENSIONS, type EvaluationReport } from "@/lib/evaluation-schema";
 import { bulletKey, type ReviewChoices } from "@/lib/review-types";
@@ -32,22 +34,22 @@ const FIELD_LABEL: Record<string, string> = {
 };
 
 interface Turn {
-  requirement: Requirement;
+  kind?: "gap" | "experience";
+  requirement?: Requirement;
   question: string;
   answer: string;
   has_experience: boolean;
   added_ids: string[];
+  note?: string;
 }
-interface Pending {
-  gap: Gap;
-  requirement: Requirement;
-  question: string;
-}
+type Pending = { kind: "gap"; gap: Gap; requirement: Requirement; question: string }
+  | { kind: "experience"; question: string };
 interface FinishResult extends ReviewResult {
   db: ExperienceDB;
   ranked: RankedCard[];
   rewritten: RewrittenCard[];
   resume: ResumeOutput;
+  allRewritten?: RewrittenCard[];
 }
 
 async function call<T>(body: Record<string, unknown>): Promise<T> {
@@ -86,6 +88,9 @@ export default function Page() {
   const [interviewDone, setInterviewDone] = useState(false);
   const [answer, setAnswer] = useState("");
   const [sortMode, setSortMode] = useState<ResumeSortMode>("relevance");
+  const [selectedCardIds, setSelectedCardIds] = useState<string[] | null>(null);
+  const [discovery, setDiscovery] = useState<ExperienceDiscoveryState>({ exhausted: false });
+  const [regularSkipped, setRegularSkipped] = useState(false);
   const [result, setResult] = useState<FinishResult | null>(null);
   const [choices, setChoices] = useState<ReviewChoices>({});
   const [reviewed, setReviewed] = useState<ReviewResult | null>(null);
@@ -123,6 +128,9 @@ export default function Page() {
       setResult(null);
       setReviewed(null);
       setChoices({});
+      setSelectedCardIds(null);
+      setDiscovery({ exhausted: false });
+      setRegularSkipped(false);
       setEditing(null);
       const p = await call<{ db: ExperienceDB }>({ step: "parse", cv });
       const j = await call<{ jd: JDAnalysis }>({ step: "jd", jd: jdText });
@@ -151,59 +159,115 @@ export default function Page() {
     currentAsked: Asked,
     count: number,
     history: { question: string; answer: string }[] = [],
+    currentDiscovery = discovery,
+    currentSelection = selectedCardIds,
   ) {
-    if (!jd || count >= MAX_QUESTIONS) {
+    if (!jd) {
       setPending(null);
       setInterviewDone(true);
       return;
     }
-    const q = await call<{ done?: boolean } & Partial<Pending>>({
+    setInterviewDone(false);
+    const q = await call<{ done?: boolean; kind?: "gap" | "experience"; question?: string; gap?: Gap; requirement?: Requirement }>({
       step: "question",
       db: currentDb,
       jd,
       gaps: currentGaps,
       asked: currentAsked,
       history,
+      regularQuestionCount: count,
+      discovery: currentDiscovery,
+      selectedCardIds: currentSelection ?? undefined,
     });
-    if (q.done || !q.gap) {
+    if (q.kind === "experience" && q.question) {
+      setPending({ kind: "experience", question: q.question });
+    } else if (q.done || !q.gap) {
       setPending(null);
       setInterviewDone(true);
     } else {
-      setPending({ gap: q.gap, requirement: q.requirement!, question: q.question! });
+      setPending({ kind: "gap", gap: q.gap, requirement: q.requirement!, question: q.question! });
     }
   }
 
   async function startInterview() {
     if (!db) return;
-    await guard("生成第一个问题…", () => nextQuestion(db, gaps, asked, 0));
+    await guard("生成第一个问题…", () => nextQuestion(db, gaps, asked, regularSkipped ? MAX_QUESTIONS : 0));
   }
 
-  async function submitAnswer() {
-    if (!db || !jd || !pending || !answer.trim()) return;
+  async function submitAnswer(answerOverride?: string) {
+    const submittedAnswer = answerOverride ?? answer;
+    if (!db || !jd || !pending || !submittedAnswer.trim()) return;
     await guard("整理你的回答、重新匹配…", async () => {
-      const r = await call<{ db: ExperienceDB; asked: Asked; gaps: Gap[]; added_ids: string[]; has_experience: boolean }>({
+      const r = await call<{ db: ExperienceDB; asked: Asked; gaps: Gap[]; added_ids: string[]; has_experience: boolean; discovery?: ExperienceDiscoveryState; new_card_ids?: string[]; note?: string }>({
         step: "answer",
         db,
         jd,
-        gap: pending.gap,
+        kind: pending.kind,
+        gap: pending.kind === "gap" ? pending.gap : undefined,
         question: pending.question,
-        answer,
+        answer: submittedAnswer,
         asked,
+        discovery,
+        history: turns,
       });
       const turn: Turn = {
-        requirement: pending.requirement,
+        kind: pending.kind,
+        requirement: pending.kind === "gap" ? pending.requirement : undefined,
         question: pending.question,
-        answer,
+        answer: submittedAnswer,
         has_experience: r.has_experience,
         added_ids: r.added_ids,
+        note: r.note,
       };
-      setTurns((t) => [...t, turn]);
+      const nextTurns = [...turns, turn];
+      const nextDiscovery = r.discovery ?? discovery;
+      const nextSelection = selectedCardIds === null ? null : [...new Set([...selectedCardIds, ...(r.new_card_ids ?? [])])];
+      setTurns(nextTurns);
+      setDiscovery(nextDiscovery);
+      setSelectedCardIds(nextSelection);
+      if (pending.kind === "experience" && r.added_ids.length) { setResult(null); setReviewed(null); }
       setPending(null);
       setDb(r.db);
       setAsked(r.asked);
       setGaps(r.gaps);
       setAnswer("");
-      await nextQuestion(r.db, r.gaps, r.asked, turns.length + 1, [...turns, turn]);
+      setBusy("生成下一条追问…");
+      await nextQuestion(r.db, r.gaps, r.asked, regularSkipped ? MAX_QUESTIONS : nextTurns.filter((t) => t.kind !== "experience").length, nextTurns, nextDiscovery, nextSelection);
+    });
+  }
+
+  async function retryNextQuestion() {
+    if (!db || !jd || pending || interviewDone) return;
+    await guard("生成下一条追问…", () => nextQuestion(db, gaps, asked, regularSkipped ? MAX_QUESTIONS : turns.filter((t) => t.kind !== "experience").length, turns));
+  }
+
+  async function skipRegularQuestions() {
+    if (!db || !jd) return;
+    setRegularSkipped(true);
+    setPending(null);
+    await guard("检查是否需要补充经历…", () => nextQuestion(db, gaps, asked, MAX_QUESTIONS, turns));
+  }
+
+  async function continueWithCurrentExperiences() {
+    if (!db || !jd) return;
+    if (pending?.kind === "experience") { await submitAnswer("没有其他相关经历"); return; }
+    const nextDiscovery = { exhausted: true, followUp: null };
+    const nextTurns: Turn[] = [...turns, { kind: "experience", question: "是否还有其他可以保留的相关经历？", answer: "没有其他相关经历", has_experience: false, added_ids: [], note: "已确认没有其他可保留经历，按现有数量继续。" }];
+    setDiscovery(nextDiscovery);
+    setTurns(nextTurns);
+    await guard("按现有经历继续…", () => nextQuestion(db, gaps, asked, MAX_QUESTIONS, nextTurns, nextDiscovery));
+  }
+
+  async function restoreExistingExperiences() {
+    if (!db || !jd || !result) return;
+    await guard("恢复已有经历…", async () => {
+      const response = await call<ReviewResult>({ step: "review", db, jd, gaps, sortMode, rewritten: result.rewritten, choices });
+      const restored = response.ranked.filter((r) => r.included).map((r) => r.card_id);
+      setSelectedCardIds(restored);
+      setReviewed(response);
+      setPending(null);
+      setAnswer("");
+      await nextQuestion(db, gaps, asked, MAX_QUESTIONS, turns, discovery, restored);
     });
   }
 
@@ -220,11 +284,15 @@ export default function Page() {
 
   async function finish() {
     if (!db || !jd) return;
+    if (needsExperienceDiscovery(db, discovery, selectedCardIds ?? undefined)) {
+      await guard("准备补充经历追问…", () => nextQuestion(db, gaps, asked, MAX_QUESTIONS, turns));
+      return;
+    }
     await guard("选择经历、改写 bullet、检查事实…", async () => {
-      const generated = await call<FinishResult>({ step: "finish", cv, db, jd, gaps, sortMode });
+      const generated = await call<FinishResult>({ step: "finish", cv, db, jd, gaps, sortMode, selectedCardIds: selectedCardIds ?? undefined, discovery, choices });
       setDb(generated.db);
-      setResult(generated);
-      setChoices({});
+      setResult({ ...generated, rewritten: generated.allRewritten ?? generated.rewritten });
+      setSelectedCardIds(generated.ranked.filter((r) => r.included).map((r) => r.card_id));
       setEditing(null);
       setReviewed(generated);
     });
@@ -235,7 +303,7 @@ export default function Page() {
     await guard("更新审阅结果…", async () => {
       const next = { ...choices, [key]: { text, status } };
       const response = await call<ReviewResult>({
-        step: "review", db, jd, gaps, sortMode, rewritten: result.rewritten, choices: next,
+        step: "review", db, jd, gaps, sortMode, rewritten: result.rewritten, choices: next, selectedCardIds: selectedCardIds ?? undefined,
       });
       setChoices(next);
       setReviewed(response);
@@ -247,14 +315,30 @@ export default function Page() {
     if (!result || !db || !jd) { setSortMode(next); return; }
     await guard("更新简历排序…", async () => {
       const response = await call<ReviewResult>({
-        step: "review", db, jd, gaps, sortMode: next, rewritten: result.rewritten, choices,
+        step: "review", db, jd, gaps, sortMode: next, rewritten: result.rewritten, choices, selectedCardIds: selectedCardIds ?? undefined,
       });
       setSortMode(next);
       setReviewed(response);
     });
   }
-  const orderedRanked = result && db ? orderResumeCards(result.ranked, db, sortMode, result.ranked) : [];
-  const orderedRewritten = result && db ? orderResumeCards(result.rewritten, db, sortMode, result.ranked) : [];
+  async function changeCardSelection(cardId: string, keep: boolean) {
+    if (!result || !db || !jd) return;
+    const current = selectedCardIds ?? (reviewed?.ranked ?? result.ranked).filter((r) => r.included).map((r) => r.card_id);
+    const next = keep ? [...new Set([...current, cardId])] : current.filter((id) => id !== cardId);
+    await guard("更新保留的经历…", async () => {
+      const response = await call<ReviewResult>({ step: "review", db, jd, gaps, sortMode, rewritten: result.rewritten, choices, selectedCardIds: next });
+      setSelectedCardIds(next);
+      setReviewed(response);
+      if (needsExperienceDiscovery(db, discovery, next)) {
+        setPending(null);
+        setAnswer("");
+        await nextQuestion(db, gaps, asked, MAX_QUESTIONS, turns, discovery, next);
+      }
+    });
+  }
+  const ranked = reviewed?.ranked ?? result?.ranked ?? [];
+  const orderedRanked = db ? orderResumeCards(ranked, db, sortMode, ranked) : [];
+  const orderedRewritten = reviewed && db ? orderResumeCards(reviewed.rewritten, db, sortMode, ranked) : [];
 
   const sources = useMemo(() => {
     const index = new Map<string, { text: string; field: string; source: string; status: string; card: string }>();
@@ -273,15 +357,18 @@ export default function Page() {
   const retainedCount = reviewed?.stats?.retained ?? 0;
   const totalBullets = reviewed?.rewritten.reduce((n, c) => n + c.bullets.length, 0) ?? 0;
   const experienceBulletCount = preview?.experienceBulletCount ?? 0;
+  const recordedExperienceCount = db ? countExperiences(db, selectedCardIds ?? undefined) : 0;
+  const previewExperienceCount = preview?.experienceCount ?? 0;
+  const experienceTargetMet = previewExperienceCount >= TARGET_EXPERIENCES || discovery.exhausted;
   const needsOriginals = !!result && (db?.cards ?? []).some((c) => c.original_bullets === undefined && FACT_FIELDS.some((f) => c[f].some((x) => x.source === "cv_parse")) && db?.affiliations.find((a) => a.id === c.affiliation_id)?.type !== "skills_list");
 
-  const evaluationSignature = JSON.stringify({ cv, jdText, db, jd, gaps, sortMode, rewritten: result?.rewritten, choices });
+  const evaluationSignature = JSON.stringify({ cv, jdText, db, jd, gaps, sortMode, selectedCardIds, discovery, rewritten: result?.rewritten, choices });
   const currentEvaluation = evaluation?.signature === evaluationSignature ? evaluation.report : null;
   async function runEvaluation() {
-    if (!db || !jd || !result || experienceBulletCount === 0) return;
+    if (!db || !jd || !result || experienceBulletCount === 0 || !experienceTargetMet) return;
     const signature = evaluationSignature;
     await guard("正在评估简历质量…", async () => {
-      const response = await call<{ evaluation: EvaluationReport }>({ step: "evaluate", cv, db, jd, gaps, sortMode, rewritten: result.rewritten, choices });
+      const response = await call<{ evaluation: EvaluationReport }>({ step: "evaluate", cv, db, jd, gaps, sortMode, selectedCardIds: selectedCardIds ?? undefined, discovery, rewritten: result.rewritten, choices });
       setEvaluation({ signature, report: response.evaluation });
     });
   }
@@ -409,47 +496,59 @@ export default function Page() {
         </section>
       )}
 
-      {(turns.length > 0 || pending) && (
+      {(turns.length > 0 || pending || interviewDone) && (
         <section className="card">
-          <h2>4. 针对性追问（最多 {MAX_QUESTIONS} 题） <Who kinds={["rule", "ai", "user"]} /></h2>
+          <h2>4. 针对性追问与补充经历 <Who kinds={["rule", "ai", "user"]} /></h2>
           <p className="note">
             <b>代码规则</b>挑下一个最值得问的缺口（按优先级）；<b>AI</b>把它说成一句话，并把你的回答整理成事实；<b>你</b>回答，没做过就写「没有」。
-            回答后会回到第 3 步重新匹配，缺口状态随之更新。
+            回答后会回到第 3 步重新匹配，缺口状态随之更新。JD 针对性追问最多 {MAX_QUESTIONS} 题；不足 {TARGET_EXPERIENCES} 段时，另行追问课程、小组作业或其他相关经历。确实没有就按现有数量继续，不为凑数编造经历。
           </p>
           {turns.map((t, i) => (
             <div className="qa" key={i}>
-              <div className="q">Q{i + 1}（{t.requirement.text}）：{t.question}</div>
+              <div className="q">Q{i + 1}（{t.kind === "experience" ? "补充经历" : t.requirement?.text}）：{t.question}</div>
               <div className="a">{t.answer}</div>
-              <div className="note">{t.has_experience ? `已记录 ${t.added_ids.length} 条新事实，上表蓝底高亮` : "你确认没有相关经历 → 该要求记为真缺口"}</div>
+              <div className="note">{t.kind === "experience" ? t.note : t.has_experience ? `已记录 ${t.added_ids.length} 条新事实，上表蓝底高亮` : "你确认没有相关经历 → 该要求记为真缺口"}</div>
             </div>
           ))}
           {pending && (
             <div className="qa">
-              <div className="q">Q{turns.length + 1}（{pending.requirement.text}）：{pending.question}</div>
+              <div className="q">Q{turns.length + 1}（{pending.kind === "experience" ? "补充经历" : pending.requirement.text}）：{pending.question}</div>
               <textarea className="short" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="直接回答；没做过就写“没有”" />
               <div className="row">
-                <button onClick={submitAnswer} disabled={!!busy || !answer.trim()}>提交回答</button>
-                <button className="ghost" onClick={() => { setPending(null); setInterviewDone(true); }} disabled={!!busy}>跳过剩余问题</button>
+                <button onClick={() => submitAnswer()} disabled={!!busy || !answer.trim()}>提交回答</button>
+                {pending.kind === "experience"
+                  ? <button className="ghost" onClick={continueWithCurrentExperiences} disabled={!!busy}>确实没有其他经历，按现有数量继续</button>
+                  : <button className="ghost" onClick={skipRegularQuestions} disabled={!!busy}>跳过剩余 JD 问题</button>}
+                {pending.kind === "experience" && result && db && countExperiences(db) >= TARGET_EXPERIENCES && <button className="ghost" disabled={!!busy} onClick={restoreExistingExperiences}>恢复全部已有经历</button>}
                 {busy && <span className="note">{busy}</span>}
               </div>
             </div>
           )}
-          {interviewDone && <p className="note">追问结束。</p>}
+          {!pending && !interviewDone && turns.length > 0 && (
+            busy ? <p className="note" role="status">正在准备下一条追问，请稍候…</p> : <>
+              <p className="err" role="alert">{error ?? "下一条追问暂未加载，请重试。"}</p>
+              <div className="row">
+                <button onClick={retryNextQuestion}>重试获取下一题</button>
+                <button className="ghost" onClick={skipRegularQuestions}>跳过剩余 JD 问题</button>
+              </div>
+            </>
+          )}
+          {interviewDone && <p className="note">追问结束。{discovery.exhausted && recordedExperienceCount < TARGET_EXPERIENCES ? `你已确认没有其他经历，将按现有 ${recordedExperienceCount} 段继续，不强制三段。` : ""}</p>}
         </section>
       )}
 
-      {jd && (interviewDone || turns.length > 0) && !pending && (
+      {jd && interviewDone && !pending && (
         <section className="card">
           <h2>5. 选材排序 · 改写 · 生成简历 <Who kinds={["rule", "ai", "rule"]} /></h2>
           <p className="note">
-            <b>代码规则</b>按覆盖了多少高优先级要求给经历打分、选材；<b>AI</b>逐条提出改写建议，保留完整原句的含义并标明来源。未操作时保留原句；只有点「接受这条」且改写通过校验才替换。未通过校验的改写不会替换原句。
+            <b>代码规则</b>按 JD 匹配证据给经历排序并提示证据情况；<b>你</b>决定保留哪些经历；<b>AI</b>逐条提出改写建议。未操作时保留原句；只有点「接受这条」且改写通过校验才替换。
           </p>
           <fieldset className="resume-sort" disabled={!!busy || editing !== null}>
             <legend>最终简历的经历排序</legend>
             {(["relevance", "chronological"] as const).map((value) => <label key={value}>
               <input type="radio" name="resume-sort" value={value} checked={sortMode === value} onChange={() => changeSortMode(value)} /> {SORT_LABELS[value]}
             </label>)}
-            <p className="note">{sortMode === "relevance" ? "优先展示与目标 JD 更相关的经历。" : "正在进行的经历优先，再按结束、开始时间倒序；日期未知的放最后，同日期按 JD 匹配度排列。项目沿用所属经历的日期。"} 切换排序会保留已接受的条目和编辑，不会重新调用 AI。入选经历仍按 JD 匹配度选择。</p>
+            <p className="note">{sortMode === "relevance" ? "优先展示与目标 JD 更相关的经历。" : "正在进行的经历优先，再按结束、开始时间倒序；日期未知的放最后，同日期按 JD 匹配度排列。项目沿用所属经历的日期。"} 切换排序会保留选择和编辑，不会重新调用 AI。经历是否保留由你决定。</p>
           </fieldset>
           <div className="row">
             <button onClick={finish} disabled={!!busy}>生成简历</button>
@@ -457,17 +556,20 @@ export default function Page() {
           </div>
           {result && (
             <>
-              <h2 style={{ marginTop: 16 }}>经历选择与排序</h2>
+              <h2 style={{ marginTop: 16 }}>经历排序与保留</h2>
+              <p className="note">默认保留全部经历，证据不足或暂未匹配也会列出。取消勾选才会从简历中移除；重新勾选会恢复原来的审阅选择，不会重新调用 AI。追问新增内容仍需在下方逐条接受后才写入简历。</p>
+              <p className="note" role="status">当前保留 {recordedExperienceCount} 段经历，目标至少 {TARGET_EXPERIENCES} 段，实习或项目均可。{discovery.exhausted ? "你已确认没有其他可保留经历，可按现有数量继续。" : "不足时会先触发补充经历追问。"}</p>
               <table>
-                <thead><tr><th>经历</th><th>JD 匹配得分</th><th>经历时间</th><th>是否入选</th><th>理由</th></tr></thead>
+                <thead><tr><th>经历</th><th>JD 匹配得分</th><th>经历时间</th><th>证据情况</th><th>保留经历</th><th>理由</th></tr></thead>
                 <tbody>
                   {orderedRanked.map((r) => (
                     <tr key={r.card_id}>
                       <td>{cardName(r.card_id)}</td>
                       <td>{r.score}</td>
                       <td>{(() => { const card = db?.cards.find((c) => c.id === r.card_id); const aff = db?.affiliations.find((a) => a.id === card?.affiliation_id); return [aff?.start_date, aff?.end_date].filter(Boolean).join(" – ") || "日期未知"; })()}</td>
-                      <td>{r.included ? "入选" : "落选"}</td>
-                      <td className="note">{r.reasons.join("；") || "与 JD 要求的匹配度低"}</td>
+                      <td><span className={`chip ${r.evidence_status === "supported" ? "covered" : r.evidence_status === "insufficient" ? "weak" : "unknown"}`}>{CARD_EVIDENCE_LABELS[r.evidence_status] ?? "待重新生成"}</span></td>
+                      <td><label><input type="checkbox" aria-label={`保留经历：${cardName(r.card_id)}`} checked={r.included} disabled={!!busy || editing !== null} onChange={(e) => changeCardSelection(r.card_id, e.target.checked)} /> 保留</label></td>
+                      <td className="note">{r.reasons.join("；")}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -479,10 +581,11 @@ export default function Page() {
               {(!needsOriginals ? orderedRewritten : []).map((rc) => (
                 <div className="cardbox" key={rc.card_id}>
                   <h3>{cardName(rc.card_id)}</h3>
-                  {rc.bullets.map((original, i) => {
-                    const key = bulletKey(rc.card_id, i, original.original_bullet_id);
-                    const b = reviewed?.rewritten.find((c) => c.card_id === rc.card_id)?.bullets[i] ?? original;
-                    const sourceBullet = db ? findOriginal(db, rc.card_id, original.original_bullet_id) : undefined;
+                  {rc.bullets.map((b, i) => {
+                    const key = bulletKey(rc.card_id, i, b.original_bullet_id, b.source_ids);
+                    const sourceBullet = db ? findOriginal(db, rc.card_id, b.original_bullet_id) : undefined;
+                    const original = result.rewritten.find((c) => c.card_id === rc.card_id)?.bullets.find((candidate, index) => bulletKey(rc.card_id, index, candidate.original_bullet_id, candidate.source_ids) === key)
+                      ?? { ...b, text: sourceBullet?.text ?? b.text, has_suggestion: false };
                     const status = choices[key]?.status ?? "pending";
                     const label = status === "excluded" ? "已排除" : !b.ok ? "改写已拦截" : status === "accepted" ? "已接受" : sourceBullet ? "待审阅 · 保留原句" : "待接受 · 新增建议";
                     return (
@@ -525,7 +628,11 @@ export default function Page() {
                 </div>
               ))}
 
-              <h2 style={{ marginTop: 16 }}>最终简历（Markdown）</h2>
+              <h2 style={{ marginTop: 16 }}>{experienceTargetMet ? "最终简历" : "简历预览 · 待补足经历"}（Markdown）</h2>
+              {!experienceTargetMet && <div className="warn" role="status">
+                <p>当前预览有 {previewExperienceCount} 段经历，目标至少 {TARGET_EXPERIENCES} 段。已记录的新增经历需要先在上方接受描述才会加入；也可以恢复被排除的原句。确实没有其他可保留经历时，可按现有数量继续。</p>
+                <button className="ghost" disabled={!!busy || editing !== null} onClick={continueWithCurrentExperiences}>没有其他可保留经历，按现有数量继续</button>
+              </div>}
               <p className="note">当前简历保留 {retainedCount} 条原句，使用 {acceptedCount} 条已接受的改写或新增描述。未操作的原句会保留。</p>
               <p className="note">当前排序：{SORT_LABELS[sortMode]}</p>
               <pre className="out">{needsOriginals ? "请重新生成简历以显示完整原句。" : preview?.markdown}</pre>
@@ -536,13 +643,13 @@ export default function Page() {
                 <ul className="warn">{preview?.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
               )}
               <div className="row">
-                <button className="ghost" disabled={!!busy || needsOriginals || experienceBulletCount === 0 || editing !== null} onClick={() => preview && navigator.clipboard.writeText(preview.markdown)}>复制 Markdown</button>
+                <button className="ghost" disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={() => preview && navigator.clipboard.writeText(preview.markdown)}>复制 Markdown</button>
               </div>
               <div className="evaluation-section">
                 <h2>简历质量评估 <Who kinds={["ai", "rule"]} /></h2>
                 <p className="note">对比原简历与当前预览稿（保留的原句及已接受的改写），按六个维度评估，并核验引用能否在原文中找到。每项 0–3 分，无法判断时不评分。建议仍需你审阅，评估不会自动修改简历。</p>
                 <p className="note">这是文字内容评估，不包含版式、PDF 解析测试或 ATS 通过率预测。LIVE 模式点击后调用一次模型，使用你的 API 额度。</p>
-                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || editing !== null} onClick={runEvaluation}>{currentEvaluation ? "重新评估" : "评估当前简历"}</button>
+                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={runEvaluation}>{currentEvaluation ? "重新评估" : "评估当前简历"}</button>
                 {busy === "正在评估简历质量…" && <p role="status">正在评估简历质量…</p>}
                 {evaluation && !currentEvaluation && <p className="note">简历或审阅内容已变化，请重新评估。</p>}
                 {currentEvaluation && <>
