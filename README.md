@@ -79,6 +79,9 @@ git push -u origin 你的名字/做什么
 | `lib/pipeline.ts` | 各步骤逻辑：AI 步骤（解析、JD 分析、匹配、提问、抽取、改写）和代码规则步骤（缺口检测、选问题、排序、事实校验） |
 | `lib/llm.ts` | 结构化输出调用（Anthropic SDK + Zod），live/mock 切换 |
 | `lib/mock.ts` | 无 Key 时的内置示例逻辑 |
+| `lib/resume-doc.ts` | 简历的结构化表示；Markdown 和网页预览 / PDF 用的 HTML 都从这里生成 |
+| `lib/resume-docx.ts` | 把简历生成 Word（.docx），在浏览器里运行 |
+| `lib/standards.ts` | 简历规范检查（动作动词开头、不用第一人称、长度、量化、篇幅、JD 关键词等），纯代码规则 |
 | `app/api/step/route.ts` | 无状态 API，状态由前端持有 |
 | `app/api/resume/route.ts` | PDF / Word（.docx）/ TXT 上传并提取文字（≤10MB）；PDF 用 unpdf，Word 用 mammoth，TXT 支持 UTF-8、带 BOM 的 UTF-16 和 GB18030，结果填回文本框供检查 |
 | `app/api/pdf/route.ts` | 原上传接口的兼容入口 |
@@ -99,4 +102,4 @@ git push -u origin 你的名字/做什么
 
 ## 尚未实现
 
-扫描件/图片版 PDF 的 OCR（目前只支持可复制文字的 PDF）、联系方式、数据库持久化（状态只在浏览器里）、语言选择、拖拽组装、导出 PDF/DOCX、追问停止条件的最终方案。
+扫描件/图片版 PDF 的 OCR（目前只支持可复制文字的 PDF）、联系方式、数据库持久化（状态只在浏览器里）、语言选择、拖拽组装、追问停止条件的最终方案。

@@ -80,6 +80,7 @@ export async function POST(req: Request) {
           db,
           jd,
           ranked.filter((r) => r.included).map((r) => r.card_id),
+          gaps,
         );
         return NextResponse.json({ mode, ranked, rewritten, resume: assembleResume(db, jd, gaps, rewritten) });
       }

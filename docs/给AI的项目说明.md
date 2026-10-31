@@ -61,7 +61,8 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 
 技术栈：Next.js + TypeScript + Zod + Anthropic SDK。运行方式见 `README.md`。
 
-- `lib/pipeline.ts`：各步骤逻辑；`lib/schema.ts`：类型与 Zod schema；`lib/llm.ts`：模型调用与 live/mock 切换；`lib/mock.ts`：无 key 时的假数据；`app/api/step/route.ts`：无状态 API；`app/page.tsx`：单页界面（已标注每步由 AI / 代码规则 / 用户完成）。
+- `lib/pipeline.ts`：各步骤逻辑；`lib/schema.ts`：类型与 Zod schema；`lib/llm.ts`：模型调用与 live/mock 切换；`lib/mock.ts`：无 key 时的假数据；`app/api/step/route.ts`：无状态 API；`app/page.tsx`：单页界面（已标注每步由 AI / 代码规则 / 用户完成）；`lib/resume-doc.ts`：简历结构化表示，Markdown、预览 / PDF、Word（`lib/resume-docx.ts`）都从它生成；`lib/standards.ts`：简历规范检查（代码规则）。
+- 选材排序：所有经历都进入简历，不因证据不足或与 JD 无关而落选；按 JD 匹配度排序（有证据的得分优先，其次是相关但证据不足的），同一段经历内 bullet 按支撑要求的优先级排序。
 - **mock 模式不读用户输入**，只返回内置示例。想用真实 CV 和 JD 必须用 live（需要 `ANTHROPIC_API_KEY`）。
 - live 模式已用真实 key 跑过（Paxton 的 CV + 真实 JD），解析、匹配、追问阶段能工作；改写与生成简历阶段在 live 下是否稳定，尚未系统验证。
 
@@ -77,7 +78,7 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 - 追问的最终停止条件；是否把 schema 合并稿与团队确认的节奏；demo 的最终受众和演示程度。
 - 挖掘阶段看不看 JD（Paxton：JD 驱动；Christine：先通用挖掘，再按 JD 补挖）。
 - "Agent"在我们这里具体指什么。
-- 中英双语、拖拽组装、导出、数据库持久化：都推后。
+- 中英双语、拖拽组装、数据库持久化：都推后。（PDF / Word 导出已实现，见 `ziyue/resume-export-ranking`）
 
 ### 已知问题（请不要假装它们不存在）
 

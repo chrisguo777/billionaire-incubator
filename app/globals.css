@@ -141,3 +141,16 @@ ul.warn { margin: 6px 0 0; padding-left: 18px; color: var(--warn); font-size: 13
 
 .evaluation-section { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 18px; }
 .evaluation-section blockquote { margin: 8px 0; padding: 6px 10px; border-left: 2px solid var(--accent); overflow-wrap: anywhere; white-space: pre-wrap; font-size: 13px; }
+/* 简历预览：模拟一张白纸，深色模式下也保持白底黑字，和导出的 PDF 一致 */
+iframe.resume-preview {
+  display: block;
+  width: 100%;
+  max-width: 8.5in;
+  min-height: 480px;
+  margin: 8px auto 0;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+}
+details summary { cursor: pointer; color: var(--accent); margin-top: 10px; }

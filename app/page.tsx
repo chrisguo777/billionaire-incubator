@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SAMPLE_CV, SAMPLE_JD } from "@/lib/sample";
 import { DIMENSIONS, type EvaluationReport } from "@/lib/evaluation-schema";
 import { bulletKey, type ReviewChoices } from "@/lib/review-types";
 import { FACT_FIELDS } from "@/lib/schema";
 import type { Asked, ExperienceDB, Gap, GapStatus, JDAnalysis, Requirement } from "@/lib/schema";
-import type { RankedCard, ResumeOutput, RewrittenCard } from "@/lib/pipeline";
+import type { MatchLevel, RankedCard, ResumeOutput, RewrittenCard } from "@/lib/pipeline";
+import { docToHTML, resumeFileName } from "@/lib/resume-doc";
+import type { StandardStatus } from "@/lib/standards";
 
 const MAX_QUESTIONS = 3; // 追问停止条件尚未最终确定，demo 先固定为 3 题
 
@@ -16,6 +18,15 @@ const GAP_LABEL: Record<GapStatus, string> = {
   unknown: "未知 Unknown",
   true_gap: "真缺口 True Gap",
 };
+const LEVEL_LABEL: Record<MatchLevel, string> = {
+  covered: "已覆盖",
+  weak: "部分覆盖",
+  unknown: "相关但证据不足",
+  none: "与 JD 无直接关联",
+};
+const LEVEL_CHIP: Record<MatchLevel, string> = { covered: "covered", weak: "weak", unknown: "unknown", none: "true_gap" };
+const STANDARD_LABEL: Record<StandardStatus, string> = { pass: "符合", warn: "建议修改", fail: "不符合" };
+const STANDARD_CHIP: Record<StandardStatus, string> = { pass: "covered", warn: "weak", fail: "true_gap" };
 const STATUS_LABEL = { user_confirmed: "已确认", ai_inferred: "待确认", missing: "缺失" } as const;
 const FIELD_LABEL: Record<string, string> = {
   context: "背景",
@@ -251,6 +262,33 @@ export default function Page() {
     return index;
   }, [db]);
   const preview = reviewed?.resume;
+  const previewFrame = useRef<HTMLIFrameElement>(null);
+  const previewHTML = useMemo(() => (preview?.doc ? docToHTML(preview.doc) : ""), [preview]);
+
+  function downloadPDF() {
+    const frame = previewFrame.current?.contentWindow;
+    if (!frame || !preview) return;
+    // 打印窗口里选择「存储为 PDF」；文件名取自页面标题
+    const original = document.title;
+    document.title = resumeFileName(preview.doc, "pdf").replace(/\.pdf$/, "");
+    frame.focus();
+    frame.print();
+    document.title = original;
+  }
+
+  async function downloadWord() {
+    if (!preview) return;
+    await guard("生成 Word 文件…", async () => {
+      const { buildDocx } = await import("@/lib/resume-docx");
+      const blob = await buildDocx(preview.doc);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = resumeFileName(preview.doc, "docx");
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+  }
   const acceptedCount = (reviewed?.rewritten ?? []).reduce((n, c) => n + c.bullets.filter((b, i) => b.ok && choices[bulletKey(c.card_id, i)]?.status === "accepted").length, 0);
   const totalBullets = result?.rewritten.reduce((n, c) => n + c.bullets.length, 0) ?? 0;
 
@@ -421,7 +459,7 @@ export default function Page() {
         <section className="card">
           <h2>5. 选材排序 · 改写 · 生成简历 <Who kinds={["rule", "ai", "rule"]} /></h2>
           <p className="note">
-            <b>代码规则</b>按覆盖了多少高优先级要求给经历打分、选材；<b>AI</b>只用「已确认」的事实改写 bullet，并标明依据哪几条事实；<b>代码规则</b>再检查：没有来源、引用未确认事实、或出现事实里没有的数字，该条就被拦截，不进简历。
+            <b>代码规则</b>按覆盖了多少高优先级要求给经历打分排序：所有经历都保留，匹配度高的排在前面，证据不足或与 JD 无直接关联的排在后面，同一段经历里支撑重要要求的 bullet 也排在前面；<b>AI</b>只用「已确认」的事实改写 bullet，并标明依据哪几条事实；<b>代码规则</b>再检查：没有来源、引用未确认事实、或出现事实里没有的数字，该条就被拦截，不进简历。
           </p>
           <div className="row">
             <button onClick={finish} disabled={!!busy}>生成简历</button>
@@ -429,16 +467,18 @@ export default function Page() {
           </div>
           {result && (
             <>
-              <h2 style={{ marginTop: 16 }}>经历选择与排序</h2>
+              <h2 style={{ marginTop: 16 }}>经历排序（按 JD 匹配度）</h2>
+              <p className="note">所有经历都会写入简历，这里的顺序就是简历里的顺序。得分＝有证据支撑的要求按优先级加权（已覆盖记全分，部分覆盖记一半）；只有相关但证据不足的经历，按相关要求排在有证据的经历之后。</p>
               <table>
-                <thead><tr><th>经历</th><th>得分</th><th>是否入选</th><th>理由</th></tr></thead>
+                <thead><tr><th>排序</th><th>经历</th><th>匹配情况</th><th>得分</th><th>理由</th></tr></thead>
                 <tbody>
                   {result.ranked.map((r) => (
                     <tr key={r.card_id}>
+                      <td>{r.rank}</td>
                       <td>{cardName(r.card_id)}</td>
+                      <td><span className={`chip ${LEVEL_CHIP[r.level]}`}>{LEVEL_LABEL[r.level]}</span></td>
                       <td>{r.score}</td>
-                      <td>{r.included ? "入选" : "落选"}</td>
-                      <td className="note">{r.reasons.join("；") || "与 JD 要求的匹配度低"}</td>
+                      <td className="note">{r.reasons.join("；") || "没有找到与 JD 要求相关的内容，保留在简历末尾"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -491,9 +531,29 @@ export default function Page() {
                 </div>
               ))}
 
-              <h2 style={{ marginTop: 16 }}>最终简历（Markdown）</h2>
+              <h2 style={{ marginTop: 16 }}>最终简历 · 预览与下载</h2>
               <p className="note">{acceptedCount ? `当前简历包含 ${acceptedCount} 条已接受的经历描述。` : "请先接受上方至少一条描述，经历部分才会写入简历。"}</p>
-              <pre className="out">{preview?.markdown}</pre>
+              <p className="note">下面的预览和导出的 PDF 是同一份排版。点「下载 PDF」会打开打印窗口，在目标打印机里选择「存储为 PDF」即可保存；「下载 Word」直接下载 .docx 文件，可以继续在 Word 里修改。</p>
+              {previewHTML && (
+                <iframe
+                  ref={previewFrame}
+                  className="resume-preview"
+                  title="简历预览"
+                  srcDoc={previewHTML}
+                  onLoad={(e) => {
+                    const d = e.currentTarget.contentDocument;
+                    if (d) e.currentTarget.style.height = `${d.documentElement.scrollHeight + 4}px`;
+                  }}
+                />
+              )}
+              <div className="row">
+                <button disabled={!!busy || acceptedCount === 0 || editing !== null} onClick={downloadPDF}>下载 PDF</button>
+                <button disabled={!!busy || acceptedCount === 0 || editing !== null} onClick={downloadWord}>下载 Word</button>
+              </div>
+              <details>
+                <summary>查看 Markdown 原文</summary>
+                <pre className="out">{preview?.markdown}</pre>
+              </details>
               <p className="note">
                 JD 覆盖：已覆盖 {preview?.coverage.covered} · 偏弱 {preview?.coverage.weak} · 未知 {preview?.coverage.unknown} · 真缺口 {preview?.coverage.true_gap}
               </p>
@@ -503,6 +563,27 @@ export default function Page() {
               <div className="row">
                 <button className="ghost" disabled={!!busy || acceptedCount === 0 || editing !== null} onClick={() => preview && navigator.clipboard.writeText(preview.markdown)}>复制 Markdown</button>
               </div>
+              {preview && (
+                <div className="evaluation-section">
+                  <h2>简历规范检查 <Who kinds={["rule"]} /></h2>
+                  <p className="note">按「好简历」的写法和格式要求逐项检查当前简历：动作动词开头、不用第一人称、长度、量化、风格一致、篇幅、JD 关键词等。全部由代码规则判断，每次结果一致；建议修改的条目可以回到上方「编辑」后重新接受。</p>
+                  <p className="note">
+                    符合 {preview.standards.filter((c) => c.status === "pass").length} 项 · 建议修改 {preview.standards.filter((c) => c.status === "warn").length} 项 · 不符合 {preview.standards.filter((c) => c.status === "fail").length} 项
+                  </p>
+                  <table>
+                    <thead><tr><th>标准</th><th>结果</th><th>说明</th></tr></thead>
+                    <tbody>
+                      {preview.standards.map((c) => (
+                        <tr key={c.id}>
+                          <td>{c.label}</td>
+                          <td><span className={`chip ${STANDARD_CHIP[c.status]}`}>{STANDARD_LABEL[c.status]}</span></td>
+                          <td className="note">{c.detail}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
               <div className="evaluation-section">
                 <h2>简历质量评估 <Who kinds={["ai", "rule"]} /></h2>
                 <p className="note">对比原简历与已接受的当前稿，按六个维度评估，并核验引用能否在原文中找到。每项 0–3 分，无法判断时不评分。建议仍需你审阅，评估不会自动修改简历。</p>
