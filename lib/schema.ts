@@ -67,7 +67,11 @@ export interface Card {
   skills: Fact[];
   scale: Fact[];
   outcomes: Outcome[];
+  // Full CV bullets, kept separately from the fact fragments used for matching.
+  original_bullets?: OriginalBullet[];
 }
+
+export interface OriginalBullet { id: string; text: string }
 
 // 教育经历：单独存放，不拆成卡片。来自 CV 解析，视为用户已确认；只记录 CV 里写明的内容。
 export interface Education {
@@ -133,6 +137,7 @@ export const ParsedCV = z.object({
         z.object({
           name: z.string(),
           my_role: z.string().nullable(),
+          original_bullet_ids: z.array(z.string()),
           context: z.array(z.string()),
           my_actions: z.array(z.string()),
           team_actions: z.array(z.string()),
@@ -199,6 +204,7 @@ export const RewriteOutput = z.object({
       card_id: z.string(),
       bullets: z.array(
         z.object({
+          original_bullet_id: z.string().nullable(),
           text: z.string(),
           source_ids: z.array(z.string()),
         }),
@@ -207,6 +213,10 @@ export const RewriteOutput = z.object({
   ),
 });
 export type RewriteOutput = z.infer<typeof RewriteOutput>;
+
+export const OriginalBulletMapping = z.object({
+  cards: z.array(z.object({ card_id: z.string(), original_bullet_ids: z.array(z.string()) })),
+});
 
 // ---------- Derived (computed by code, never stored as fact) ----------
 

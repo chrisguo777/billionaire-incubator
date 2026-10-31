@@ -8,7 +8,7 @@ import {
   analyzeJD,
   applyAnswer,
   askQuestion,
-  assembleResume,
+  ensureOriginalBullets,
   detectGaps,
   matchExperience,
   parseCV,
@@ -63,8 +63,8 @@ export async function POST(req: Request) {
       }
       case "evaluate": {
         const current = reviewResume(body.db, body.jd, body.gaps, body.rewritten, body.choices ?? {}, sortMode);
-        if (!current.resume.markdown.includes("\n- ")) {
-          return NextResponse.json({ error: "请先接受至少一条通过校验的经历描述，再进行质量评估" }, { status: 400 });
+        if (!current.resume.experienceBulletCount) {
+          return NextResponse.json({ error: "当前简历没有经历描述，请先保留原句或接受新增建议，再进行质量评估" }, { status: 400 });
         }
         if (typeof body.cv !== "string" || !body.cv.trim()) {
           return NextResponse.json({ error: "缺少原简历，无法进行前后对比" }, { status: 400 });
@@ -75,7 +75,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ mode, ...reviewResume(body.db, body.jd, body.gaps, body.rewritten, body.choices ?? {}, sortMode) });
       }
       case "finish": {
-        const db: ExperienceDB = body.db;
+        const db: ExperienceDB = await ensureOriginalBullets(body.db, body.cv);
         const jd: JDAnalysis = body.jd;
         const gaps: Gap[] = body.gaps;
         const candidates = rankCards(db, jd, gaps);
@@ -85,7 +85,7 @@ export async function POST(req: Request) {
           jd,
           ranked.filter((r) => r.included).map((r) => r.card_id),
         );
-        return NextResponse.json({ mode, ranked, rewritten: orderResumeCards(rewritten, db, sortMode, ranked), resume: assembleResume(db, jd, gaps, rewritten, sortMode) });
+        return NextResponse.json({ mode, db, ranked, ...reviewResume(db, jd, gaps, rewritten, {}, sortMode) });
       }
       default:
         return NextResponse.json({ error: `unknown step: ${body.step}` }, { status: 400 });

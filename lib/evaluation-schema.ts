@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const EVALUATION_VERSION = "2026-10-22.2";
+export const EVALUATION_VERSION = "2026-10-30.1";
 
 export const DIMENSIONS = {
   relevance: "岗位匹配", contribution: "个人贡献", methods: "方法与工具",

@@ -3,4 +3,4 @@ export interface ReviewChoice {
   status: "accepted" | "excluded" | "pending";
 }
 export type ReviewChoices = Record<string, ReviewChoice>;
-export const bulletKey = (cardId: string, index: number) => `${cardId}:${index}`;
+export const bulletKey = (cardId: string, index: number, originalId?: string | null) => `${cardId}:${originalId ?? index}`;

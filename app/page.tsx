@@ -5,6 +5,8 @@ import { SORT_LABELS, orderResumeCards, type ResumeSortMode } from "@/lib/resume
 import { SAMPLE_CV, SAMPLE_JD } from "@/lib/sample";
 import { DIMENSIONS, type EvaluationReport } from "@/lib/evaluation-schema";
 import { bulletKey, type ReviewChoices } from "@/lib/review-types";
+import { findOriginal } from "@/lib/original-bullets";
+import type { ReviewResult } from "@/lib/review";
 import { FACT_FIELDS } from "@/lib/schema";
 import type { Asked, ExperienceDB, Gap, GapStatus, JDAnalysis, Requirement } from "@/lib/schema";
 import type { RankedCard, ResumeOutput, RewrittenCard } from "@/lib/pipeline";
@@ -41,7 +43,8 @@ interface Pending {
   requirement: Requirement;
   question: string;
 }
-interface FinishResult {
+interface FinishResult extends ReviewResult {
+  db: ExperienceDB;
   ranked: RankedCard[];
   rewritten: RewrittenCard[];
   resume: ResumeOutput;
@@ -85,7 +88,7 @@ export default function Page() {
   const [sortMode, setSortMode] = useState<ResumeSortMode>("relevance");
   const [result, setResult] = useState<FinishResult | null>(null);
   const [choices, setChoices] = useState<ReviewChoices>({});
-  const [reviewed, setReviewed] = useState<{ rewritten: RewrittenCard[]; resume: ResumeOutput } | null>(null);
+  const [reviewed, setReviewed] = useState<ReviewResult | null>(null);
   const [evaluation, setEvaluation] = useState<{ signature: string; report: EvaluationReport } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -218,12 +221,12 @@ export default function Page() {
   async function finish() {
     if (!db || !jd) return;
     await guard("选择经历、改写 bullet、检查事实…", async () => {
-      const generated = await call<FinishResult>({ step: "finish", db, jd, gaps, sortMode });
-      const initial = await call<{ rewritten: RewrittenCard[]; resume: ResumeOutput }>({ step: "review", db, jd, gaps, sortMode, rewritten: generated.rewritten, choices: {} });
+      const generated = await call<FinishResult>({ step: "finish", cv, db, jd, gaps, sortMode });
+      setDb(generated.db);
       setResult(generated);
       setChoices({});
       setEditing(null);
-      setReviewed(initial);
+      setReviewed(generated);
     });
   }
 
@@ -231,7 +234,7 @@ export default function Page() {
     if (!db || !jd || !result) return;
     await guard("更新审阅结果…", async () => {
       const next = { ...choices, [key]: { text, status } };
-      const response = await call<{ rewritten: RewrittenCard[]; resume: ResumeOutput }>({
+      const response = await call<ReviewResult>({
         step: "review", db, jd, gaps, sortMode, rewritten: result.rewritten, choices: next,
       });
       setChoices(next);
@@ -243,7 +246,7 @@ export default function Page() {
   async function changeSortMode(next: ResumeSortMode) {
     if (!result || !db || !jd) { setSortMode(next); return; }
     await guard("更新简历排序…", async () => {
-      const response = await call<{ rewritten: RewrittenCard[]; resume: ResumeOutput }>({
+      const response = await call<ReviewResult>({
         step: "review", db, jd, gaps, sortMode: next, rewritten: result.rewritten, choices,
       });
       setSortMode(next);
@@ -266,13 +269,16 @@ export default function Page() {
     return index;
   }, [db]);
   const preview = reviewed?.resume;
-  const acceptedCount = (reviewed?.rewritten ?? []).reduce((n, c) => n + c.bullets.filter((b, i) => b.ok && choices[bulletKey(c.card_id, i)]?.status === "accepted").length, 0);
-  const totalBullets = result?.rewritten.reduce((n, c) => n + c.bullets.length, 0) ?? 0;
+  const acceptedCount = reviewed?.stats?.accepted ?? 0;
+  const retainedCount = reviewed?.stats?.retained ?? 0;
+  const totalBullets = reviewed?.rewritten.reduce((n, c) => n + c.bullets.length, 0) ?? 0;
+  const experienceBulletCount = preview?.experienceBulletCount ?? 0;
+  const needsOriginals = !!result && (db?.cards ?? []).some((c) => c.original_bullets === undefined && FACT_FIELDS.some((f) => c[f].some((x) => x.source === "cv_parse")) && db?.affiliations.find((a) => a.id === c.affiliation_id)?.type !== "skills_list");
 
   const evaluationSignature = JSON.stringify({ cv, jdText, db, jd, gaps, sortMode, rewritten: result?.rewritten, choices });
   const currentEvaluation = evaluation?.signature === evaluationSignature ? evaluation.report : null;
   async function runEvaluation() {
-    if (!db || !jd || !result || acceptedCount === 0) return;
+    if (!db || !jd || !result || experienceBulletCount === 0) return;
     const signature = evaluationSignature;
     await guard("正在评估简历质量…", async () => {
       const response = await call<{ evaluation: EvaluationReport }>({ step: "evaluate", cv, db, jd, gaps, sortMode, rewritten: result.rewritten, choices });
@@ -436,7 +442,7 @@ export default function Page() {
         <section className="card">
           <h2>5. 选材排序 · 改写 · 生成简历 <Who kinds={["rule", "ai", "rule"]} /></h2>
           <p className="note">
-            <b>代码规则</b>按覆盖了多少高优先级要求给经历打分、选材；<b>AI</b>只用「已确认」的事实改写 bullet，并标明依据哪几条事实；<b>代码规则</b>再检查：没有来源、引用未确认事实、或出现事实里没有的数字，该条就被拦截，不进简历。
+            <b>代码规则</b>按覆盖了多少高优先级要求给经历打分、选材；<b>AI</b>逐条提出改写建议，保留完整原句的含义并标明来源。未操作时保留原句；只有点「接受这条」且改写通过校验才替换。未通过校验的改写不会替换原句。
           </p>
           <fieldset className="resume-sort" disabled={!!busy || editing !== null}>
             <legend>最终简历的经历排序</legend>
@@ -468,38 +474,43 @@ export default function Page() {
               </table>
 
               <h2 style={{ marginTop: 16 }}>改写对照与逐条审阅</h2>
-              <p className="note" role="status">共 {totalBullets} 条，已接受 {acceptedCount} 条。只有已接受且通过规则校验的内容才进入下方简历。</p>
-              <p className="note">左侧是经历库中抽取的事实，接近原文但不等同于原始简历逐字内容。规则校验只检查来源、确认状态和数字；请同时核实职责和个人贡献是否准确。</p>
-              {orderedRewritten.map((rc) => (
+              {needsOriginals ? <p className="note" role="status">当前结果来自旧版，请点「生成简历」补齐完整原句，已有追问记录会保留。</p> : <p className="note" role="status">共 {totalBullets} 条，已接受 {acceptedCount} 条，保留原句 {retainedCount} 条，已排除 {reviewed?.stats?.excluded ?? 0} 条。未选择时保留原句，接受后才替换；排除会删除整条。</p>}
+              <p className="note">左侧保留原简历的整条 bullet（包含续行和分句），每条原句只审阅一次。追问补充的新增建议没有原句，需接受后才加入。规则校验只检查来源、确认状态和数字，请同时核实职责与个人贡献。</p>
+              {(!needsOriginals ? orderedRewritten : []).map((rc) => (
                 <div className="cardbox" key={rc.card_id}>
                   <h3>{cardName(rc.card_id)}</h3>
                   {rc.bullets.map((original, i) => {
-                    const key = bulletKey(rc.card_id, i);
+                    const key = bulletKey(rc.card_id, i, original.original_bullet_id);
                     const b = reviewed?.rewritten.find((c) => c.card_id === rc.card_id)?.bullets[i] ?? original;
+                    const sourceBullet = db ? findOriginal(db, rc.card_id, original.original_bullet_id) : undefined;
                     const status = choices[key]?.status ?? "pending";
-                    const label = !b.ok ? "已拦截" : status === "accepted" ? "已接受" : status === "excluded" ? "已排除" : "待审阅";
+                    const label = status === "excluded" ? "已排除" : !b.ok ? "改写已拦截" : status === "accepted" ? "已接受" : sourceBullet ? "待审阅 · 保留原句" : "待接受 · 新增建议";
                     return (
                       <article className="bullet-review" key={key} aria-label={`${cardName(rc.card_id)} 第 ${i + 1} 条审阅`}>
                         <div className="review-heading"><b>Bullet {i + 1}</b><span className={`chip ${!b.ok ? "blocked" : status === "accepted" ? "user_confirmed" : "unknown"}`}>{label}</span></div>
                         <div className="grid2">
                           <div className="review-panel">
-                            <h4>改写前 · 来源事实</h4>
-                            {original.source_ids.length === 0 && <p className="err">未引用来源事实</p>}
-                            {original.source_ids.map((id) => {
+                            <h4>改写前 · 原简历整条 bullet</h4>
+                            {sourceBullet ? <p className="bullet-text">{sourceBullet.text}</p> : <p className="note">追问补充的新增内容，原简历中没有对应原句；未接受时不会加入简历。</p>}
+                            <details><summary>查看支持改写的来源事实</summary>
+                            {original.source_ids.filter((id) => id !== original.original_bullet_id).map((id) => {
                               const fact = sources.get(id);
                               return <div className="source-fact" key={id}>
                                 {fact ? <><p>{fact.text}</p><span className="note">{fact.field} · {fact.source === "cv_parse" ? "简历解析" : fact.source === "dialogue" ? "追问补充" : "用户编辑"} · {STATUS_LABEL[fact.status as keyof typeof STATUS_LABEL]} · {id}{fact.card !== cardName(rc.card_id) ? ` · 来自「${fact.card}」` : ""}</span></> : <p className="err">找不到来源 {id}</p>}
                               </div>;
                             })}
+                            {original.source_ids.every((id) => id === original.original_bullet_id) && <p className="note">依据左侧完整原句。</p>}
+                            </details>
                           </div>
                           <div className="review-panel">
-                            <h4>改写后 · {b.text !== original.text ? "你的修改稿" : "AI 建议稿"}</h4>
+                            <h4>改写建议 · {b.text !== original.text ? "你的修改稿" : original.has_suggestion === false ? "暂保留原句" : "AI 建议稿"}</h4>
                             {editing === key ? <>
                               <textarea className="short" aria-label={`编辑 ${cardName(rc.card_id)} 第 ${i + 1} 条`} value={editText} onChange={(e) => setEditText(e.target.value)} disabled={!!busy} />
                               <div className="row"><button disabled={!!busy || !editText.trim()} onClick={() => reviewBullet(key, editText, "pending")}>保存并重新校验</button><button className="ghost" disabled={!!busy} onClick={() => setEditing(null)}>取消</button></div>
                             </> : <p className="bullet-text">{b.text}</p>}
                             {b.text !== original.text && <details><summary>查看 AI 原建议</summary><p>{original.text}</p></details>}
                             <p className={`note ${!b.ok ? "err" : ""}`}>{b.ok ? "来源与数字规则校验通过" : b.issues.join("；")}</p>
+                            <p className="note">{status === "excluded" ? "本条已从最终简历排除。" : status === "accepted" && b.ok ? "最终简历使用这条改写稿。" : sourceBullet ? "最终简历保留左侧原句。编辑保存后仍需点「接受这条」才替换。" : "本条尚未加入最终简历。"}</p>
                             <div className="row">
                               <button disabled={!!busy || !b.ok || editing !== null || status === "accepted"} onClick={() => reviewBullet(key, b.text, "accepted")}>接受这条</button>
                               <button className="ghost" disabled={!!busy || editing !== null} onClick={() => { setEditing(key); setEditText(b.text); }}>编辑</button>
@@ -515,9 +526,9 @@ export default function Page() {
               ))}
 
               <h2 style={{ marginTop: 16 }}>最终简历（Markdown）</h2>
-              <p className="note">{acceptedCount ? `当前简历包含 ${acceptedCount} 条已接受的经历描述。` : "请先接受上方至少一条描述，经历部分才会写入简历。"}</p>
+              <p className="note">当前简历保留 {retainedCount} 条原句，使用 {acceptedCount} 条已接受的改写或新增描述。未操作的原句会保留。</p>
               <p className="note">当前排序：{SORT_LABELS[sortMode]}</p>
-              <pre className="out">{preview?.markdown}</pre>
+              <pre className="out">{needsOriginals ? "请重新生成简历以显示完整原句。" : preview?.markdown}</pre>
               <p className="note">
                 JD 覆盖：已覆盖 {preview?.coverage.covered} · 偏弱 {preview?.coverage.weak} · 未知 {preview?.coverage.unknown} · 真缺口 {preview?.coverage.true_gap}
               </p>
@@ -525,13 +536,13 @@ export default function Page() {
                 <ul className="warn">{preview?.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
               )}
               <div className="row">
-                <button className="ghost" disabled={!!busy || acceptedCount === 0 || editing !== null} onClick={() => preview && navigator.clipboard.writeText(preview.markdown)}>复制 Markdown</button>
+                <button className="ghost" disabled={!!busy || needsOriginals || experienceBulletCount === 0 || editing !== null} onClick={() => preview && navigator.clipboard.writeText(preview.markdown)}>复制 Markdown</button>
               </div>
               <div className="evaluation-section">
                 <h2>简历质量评估 <Who kinds={["ai", "rule"]} /></h2>
-                <p className="note">对比原简历与已接受的当前稿，按六个维度评估，并核验引用能否在原文中找到。每项 0–3 分，无法判断时不评分。建议仍需你审阅，评估不会自动修改简历。</p>
+                <p className="note">对比原简历与当前预览稿（保留的原句及已接受的改写），按六个维度评估，并核验引用能否在原文中找到。每项 0–3 分，无法判断时不评分。建议仍需你审阅，评估不会自动修改简历。</p>
                 <p className="note">这是文字内容评估，不包含版式、PDF 解析测试或 ATS 通过率预测。LIVE 模式点击后调用一次模型，使用你的 API 额度。</p>
-                <button disabled={!!busy || acceptedCount === 0 || editing !== null} onClick={runEvaluation}>{currentEvaluation ? "重新评估" : "评估当前简历"}</button>
+                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || editing !== null} onClick={runEvaluation}>{currentEvaluation ? "重新评估" : "评估当前简历"}</button>
                 {busy === "正在评估简历质量…" && <p role="status">正在评估简历质量…</p>}
                 {evaluation && !currentEvaluation && <p className="note">简历或审阅内容已变化，请重新评估。</p>}
                 {currentEvaluation && <>
