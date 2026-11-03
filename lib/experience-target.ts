@@ -2,7 +2,8 @@ import { FACT_FIELDS, type ExperienceDB, type JDAnalysis } from "./schema";
 import { uniqueOriginals } from "./original-bullets";
 import { selectResumeCards } from "./resume-selection";
 
-export const TARGET_EXPERIENCES = 3;
+// 0 = 暂时关闭「补足经历」追问；原值为 3，重新开启前先确认追问话术和测试（tests/experience-discovery.cjs）。
+export const TARGET_EXPERIENCES = 0;
 export interface ExperienceDiscoveryState {
   exhausted: boolean;
   followUp?: string | null;

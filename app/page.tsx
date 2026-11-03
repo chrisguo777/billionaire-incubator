@@ -498,10 +498,10 @@ export default function Page() {
 
       {(turns.length > 0 || pending || interviewDone) && (
         <section className="card">
-          <h2>4. 针对性追问与补充经历 <Who kinds={["rule", "ai", "user"]} /></h2>
+          <h2>4. 针对性追问{TARGET_EXPERIENCES > 0 ? "与补充经历" : ""} <Who kinds={["rule", "ai", "user"]} /></h2>
           <p className="note">
             <b>代码规则</b>挑下一个最值得问的缺口（按优先级）；<b>AI</b>把它说成一句话，并把你的回答整理成事实；<b>你</b>回答，没做过就写「没有」。
-            回答后会回到第 3 步重新匹配，缺口状态随之更新。JD 针对性追问最多 {MAX_QUESTIONS} 题；不足 {TARGET_EXPERIENCES} 段时，另行追问课程、小组作业或其他相关经历。确实没有就按现有数量继续，不为凑数编造经历。
+            回答后会回到第 3 步重新匹配，缺口状态随之更新。JD 针对性追问最多 {MAX_QUESTIONS} 题。{TARGET_EXPERIENCES > 0 && `不足 ${TARGET_EXPERIENCES} 段时，另行追问课程、小组作业或其他相关经历。确实没有就按现有数量继续，不为凑数编造经历。`}
           </p>
           {turns.map((t, i) => (
             <div className="qa" key={i}>
@@ -558,7 +558,7 @@ export default function Page() {
             <>
               <h2 style={{ marginTop: 16 }}>经历排序与保留</h2>
               <p className="note">默认保留全部经历，证据不足或暂未匹配也会列出。取消勾选才会从简历中移除；重新勾选会恢复原来的审阅选择，不会重新调用 AI。追问新增内容仍需在下方逐条接受后才写入简历。</p>
-              <p className="note" role="status">当前保留 {recordedExperienceCount} 段经历，目标至少 {TARGET_EXPERIENCES} 段，实习或项目均可。{discovery.exhausted ? "你已确认没有其他可保留经历，可按现有数量继续。" : "不足时会先触发补充经历追问。"}</p>
+              <p className="note" role="status">当前保留 {recordedExperienceCount} 段经历。{TARGET_EXPERIENCES > 0 && <>目标至少 {TARGET_EXPERIENCES} 段，实习或项目均可。{discovery.exhausted ? "你已确认没有其他可保留经历，可按现有数量继续。" : "不足时会先触发补充经历追问。"}</>}</p>
               <table>
                 <thead><tr><th>经历</th><th>JD 匹配得分</th><th>经历时间</th><th>证据情况</th><th>保留经历</th><th>理由</th></tr></thead>
                 <tbody>
