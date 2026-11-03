@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SORT_LABELS, orderResumeCards, type ResumeSortMode } from "@/lib/resume-order";
 import { CARD_EVIDENCE_LABELS } from "@/lib/resume-selection";
 import { countExperiences, needsExperienceDiscovery, TARGET_EXPERIENCES, type ExperienceDiscoveryState } from "@/lib/experience-target";
@@ -12,6 +12,7 @@ import type { ReviewResult } from "@/lib/review";
 import { FACT_FIELDS } from "@/lib/schema";
 import type { Asked, ExperienceDB, Gap, GapStatus, JDAnalysis, Requirement } from "@/lib/schema";
 import type { RankedCard, ResumeOutput, RewrittenCard } from "@/lib/pipeline";
+import { docToHTML, resumeFileName } from "@/lib/resume-doc";
 
 const MAX_QUESTIONS = 3; // 追问停止条件尚未最终确定，demo 先固定为 3 题
 
@@ -353,6 +354,33 @@ export default function Page() {
     return index;
   }, [db]);
   const preview = reviewed?.resume;
+  const previewFrame = useRef<HTMLIFrameElement>(null);
+  const previewHTML = useMemo(() => (preview?.doc ? docToHTML(preview.doc) : ""), [preview]);
+
+  function downloadPDF() {
+    const frame = previewFrame.current?.contentWindow;
+    if (!frame || !preview) return;
+    // 打印窗口里选择「存储为 PDF」；文件名取自页面标题
+    const original = document.title;
+    document.title = resumeFileName(preview.doc, "pdf").replace(/\.pdf$/, "");
+    frame.focus();
+    frame.print();
+    document.title = original;
+  }
+
+  async function downloadWord() {
+    if (!preview) return;
+    await guard("生成 Word 文件…", async () => {
+      const { buildDocx } = await import("@/lib/resume-docx");
+      const blob = await buildDocx(preview.doc);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = resumeFileName(preview.doc, "docx");
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+  }
   const acceptedCount = reviewed?.stats?.accepted ?? 0;
   const retainedCount = reviewed?.stats?.retained ?? 0;
   const totalBullets = reviewed?.rewritten.reduce((n, c) => n + c.bullets.length, 0) ?? 0;
@@ -628,14 +656,34 @@ export default function Page() {
                 </div>
               ))}
 
-              <h2 style={{ marginTop: 16 }}>{experienceTargetMet ? "最终简历" : "简历预览 · 待补足经历"}（Markdown）</h2>
+              <h2 style={{ marginTop: 16 }}>{experienceTargetMet ? "最终简历" : "简历预览 · 待补足经历"} · 预览与下载</h2>
               {!experienceTargetMet && <div className="warn" role="status">
                 <p>当前预览有 {previewExperienceCount} 段经历，目标至少 {TARGET_EXPERIENCES} 段。已记录的新增经历需要先在上方接受描述才会加入；也可以恢复被排除的原句。确实没有其他可保留经历时，可按现有数量继续。</p>
                 <button className="ghost" disabled={!!busy || editing !== null} onClick={continueWithCurrentExperiences}>没有其他可保留经历，按现有数量继续</button>
               </div>}
               <p className="note">当前简历保留 {retainedCount} 条原句，使用 {acceptedCount} 条已接受的改写或新增描述。未操作的原句会保留。</p>
               <p className="note">当前排序：{SORT_LABELS[sortMode]}</p>
-              <pre className="out">{needsOriginals ? "请重新生成简历以显示完整原句。" : preview?.markdown}</pre>
+              <p className="note">下面的预览和导出的 PDF 是同一份排版，排序、保留和已接受的改写都会同步。点「下载 PDF」会打开打印窗口，在目标打印机里选择「存储为 PDF」即可保存；「下载 Word」直接下载 .docx 文件，可以继续在 Word 里修改。</p>
+              {needsOriginals ? <p className="note" role="status">请重新生成简历以显示完整原句。</p> : previewHTML && (
+                <iframe
+                  ref={previewFrame}
+                  className="resume-preview"
+                  title="简历预览"
+                  srcDoc={previewHTML}
+                  onLoad={(e) => {
+                    const d = e.currentTarget.contentDocument;
+                    if (d) e.currentTarget.style.height = `${d.documentElement.scrollHeight + 4}px`;
+                  }}
+                />
+              )}
+              <div className="row">
+                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={downloadPDF}>下载 PDF</button>
+                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={downloadWord}>下载 Word</button>
+              </div>
+              <details>
+                <summary>查看 Markdown 原文</summary>
+                <pre className="out">{needsOriginals ? "请重新生成简历以显示完整原句。" : preview?.markdown}</pre>
+              </details>
               <p className="note">
                 JD 覆盖：已覆盖 {preview?.coverage.covered} · 偏弱 {preview?.coverage.weak} · 未知 {preview?.coverage.unknown} · 真缺口 {preview?.coverage.true_gap}
               </p>
