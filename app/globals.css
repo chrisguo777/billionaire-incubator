@@ -141,3 +141,9 @@ ul.warn { margin: 6px 0 0; padding-left: 18px; color: var(--warn); font-size: 13
 
 .evaluation-section { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 18px; }
 .evaluation-section blockquote { margin: 8px 0; padding: 6px 10px; border-left: 2px solid var(--accent); overflow-wrap: anywhere; white-space: pre-wrap; font-size: 13px; }
+
+.resume-sort { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin: 14px 0; }
+.resume-sort legend { font-weight: 600; font-size: 14px; }
+.resume-sort label { display: inline-flex; gap: 5px; align-items: center; margin-right: 20px; cursor: pointer; }
+.resume-sort input { accent-color: var(--accent); }
+.resume-sort:disabled label { opacity: .6; cursor: not-allowed; }
