@@ -1,17 +1,19 @@
 import { orderResumeCards, type ResumeSortMode } from "./resume-order";
 import { assembleResume, checkBullet, normalizeRewrites, rankCards, type RewrittenCard } from "./pipeline";
 import { findOriginal, normalizedBullet } from "./original-bullets";
+import { selectResumeCards } from "./resume-selection";
 import type { ExperienceDB, Gap, JDAnalysis } from "./schema";
 
 import { bulletKey, type ReviewChoices } from "./review-types";
 
 // Recheck user edits with the same rules as generated bullets; never trust client ok flags.
-export function reviewResume(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[], original: RewrittenCard[], choices: ReviewChoices, sortMode: ResumeSortMode = "relevance") {
-  const normalized = normalizeRewrites(db, original.map((c) => c.card_id), { cards: original });
+export function reviewResume(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[], original: RewrittenCard[], choices: ReviewChoices, sortMode: ResumeSortMode = "relevance", selectedCardIds?: readonly string[]) {
+  const ranked = selectResumeCards(rankCards(db, jd, gaps), selectedCardIds);
+  const normalized = normalizeRewrites(db, ranked.filter((r) => r.included).map((r) => r.card_id), { cards: original });
   const rewritten = normalized.map((card) => ({
     ...card,
     bullets: card.bullets.map((bullet, index) => {
-      const choice = choices[bulletKey(card.card_id, index, bullet.original_bullet_id)];
+      const choice = choices[bulletKey(card.card_id, index, bullet.original_bullet_id, bullet.source_ids)];
       const text = (choice?.text ?? bullet.text).trim();
       const checked = checkBullet(db, text, bullet.source_ids);
       if (!text) { checked.ok = false; checked.issues.push("内容不能为空"); }
@@ -23,7 +25,7 @@ export function reviewResume(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[], orig
   // Each pass can only block more replacements, so the loop is bounded.
   const rows = rewritten.flatMap((card) => card.bullets.map((b, i) => ({
     b, cardId: card.card_id, affiliationId: db.cards.find((c) => c.id === card.card_id)?.affiliation_id,
-    status: choices[bulletKey(card.card_id, i, b.original_bullet_id)]?.status ?? "pending",
+    status: choices[bulletKey(card.card_id, i, b.original_bullet_id, b.source_ids)]?.status ?? "pending",
     source: findOriginal(db, card.card_id, b.original_bullet_id),
   })));
   for (let pass = 0; pass < rows.length; pass++) {
@@ -52,7 +54,7 @@ export function reviewResume(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[], orig
   const effective = rewritten.map((card) => ({
     ...card,
     bullets: card.bullets.flatMap((b, i) => {
-      const status = choices[bulletKey(card.card_id, i, b.original_bullet_id)]?.status ?? "pending";
+      const status = choices[bulletKey(card.card_id, i, b.original_bullet_id, b.source_ids)]?.status ?? "pending";
       if (status === "excluded") { stats.excluded++; return []; }
       if (status === "accepted" && b.ok) { stats.accepted++; return [b]; }
       const source = findOriginal(db, card.card_id, b.original_bullet_id);
@@ -68,7 +70,7 @@ export function reviewResume(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[], orig
   for (const card of rewritten) for (const b of card.bullets) if (!b.ok) {
     resume.warnings.push(`改写未通过校验，${findOriginal(db, card.card_id, b.original_bullet_id) ? "未排除时保留原句" : "新增内容未写入"}：「${b.text}」— ${b.issues.join("；")}`);
   }
-  return { rewritten: orderResumeCards(rewritten, db, sortMode, rankCards(db, jd, gaps)), resume, stats };
+  return { rewritten: orderResumeCards(rewritten, db, sortMode, ranked), resume, stats, ranked: orderResumeCards(ranked, db, sortMode, ranked) };
 }
 
 export type ReviewResult = ReturnType<typeof reviewResume>;
