@@ -36,6 +36,7 @@ export function mockParseCV(): ParsedCV {
         cards: [
           {
             name: "30-day readmission prediction",
+            original_bullet_ids: ["cvb6", "cvb7", "cvb8", "cvb9"],
             my_role: "Graduate Research Assistant",
             context: ["Predict 30-day readmission from patient records"],
             my_actions: [
@@ -63,6 +64,7 @@ export function mockParseCV(): ParsedCV {
         cards: [
           {
             name: "Hospital scheduling database",
+            original_bullet_ids: ["cvb12", "cvb13"],
             my_role: null,
             context: ["Relational database for hospital scheduling"],
             my_actions: ["Wrote queries for the project"],
@@ -84,6 +86,7 @@ export function mockParseCV(): ParsedCV {
         cards: [
           {
             name: "Intro to Statistics TA",
+            original_bullet_ids: ["cvb16", "cvb17"],
             my_role: "Teaching Assistant",
             context: [],
             my_actions: [
@@ -108,6 +111,7 @@ export function mockParseCV(): ParsedCV {
         cards: [
           {
             name: "Skills listed on CV",
+            original_bullet_ids: [],
             my_role: null,
             context: [],
             my_actions: [],
@@ -213,18 +217,12 @@ export function mockRewrite(db: ExperienceDB, cardIds: string[]): RewriteOutput 
     cards: cardIds.flatMap((id) => {
       const card = db.cards.find((c) => c.id === id);
       if (!card) return [];
-      const confirmedOutcome = card.outcomes.find((o) => o.status === "user_confirmed");
-      const bullets = card.my_actions
-        .filter((a) => a.status === "user_confirmed")
-        .map((a, i) => {
-          const parts = [a.text.replace(/\.$/, "")];
-          const sources = [a.id];
-          if (i === 0 && confirmedOutcome) {
-            parts.push(`(${confirmedOutcome.note}: ${confirmedOutcome.value ?? ""}${confirmedOutcome.unit ? " " + confirmedOutcome.unit : ""})`);
-            sources.push(confirmedOutcome.id);
-          }
-          return { text: parts.join(" "), source_ids: sources };
-        });
+      const bullets = [
+        ...(card.original_bullets ?? []).map((b) => ({ original_bullet_id: b.id,
+          text: b.text.replace(/^Built /, "Developed ").replace(/^Wrote /, "Authored "), source_ids: [b.id] })),
+        ...card.my_actions.filter((a) => a.status === "user_confirmed" && a.source === "dialogue")
+          .map((a) => ({ original_bullet_id: null, text: a.text, source_ids: [a.id] })),
+      ];
       return [{ card_id: card.id, bullets }];
     }),
   };

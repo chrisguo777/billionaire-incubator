@@ -31,7 +31,7 @@ node tests/evaluation/validation.cjs
 修复回归时验证服务版本，避免误测未重启的旧服务：
 
 ```bash
-python3 tests/evaluation/run.py --base http://127.0.0.1:3000 --expected-version 2026-10-22.2 --case faithful --output /绝对路径/新的结果目录
+python3 tests/evaluation/run.py --base http://127.0.0.1:3000 --expected-version 2026-10-30.1 --case faithful --output /绝对路径/新的结果目录
 ```
 
 版本不匹配会在模型调用前停止。测试报告需与同目录的 version.json、fixtures.json 和逐次响应一起保留。

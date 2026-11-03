@@ -8,9 +8,10 @@ DIMENSIONS = {'relevance':'岗位匹配','contribution':'个人贡献','methods'
 
 def fixture(case_id, original, rewritten, action, outcome):
     card={'id':'c1','affiliation_id':'a1','name':'Reporting project','my_role':None,**{f:[] for f in ['context','my_actions','team_actions','methods','tools','skills','scale']},'outcomes':[]}
+    card['original_bullets']=[{'id':'cvb1','text':original}]
     card['my_actions']=[{'id':'f1','text':action,'status':'user_confirmed','source':'cv_parse'}]
     card['outcomes']=[{'id':'o1','note':outcome,'value':None,'unit':None,'basis':None,'status':'user_confirmed','source':'cv_parse'}]
-    body={'step':'evaluate','cv':original,'db':{'affiliations':[{'id':'a1','organization':'Example Company','title':'Analyst Intern','type':'intern','start_date':None,'end_date':None}],'cards':[card]},'jd':{'role_title':'Data Analyst','domain':'Analytics','seniority':'Entry','requirements':[{'id':'r1','text':'Build Python reports to help operations teams make decisions','kind':'responsibility','priority':'high','keywords':['python','reporting','operations']}]},'gaps':[],'rewritten':[{'card_id':'c1','bullets':[{'text':rewritten,'source_ids':['f1','o1'],'ok':True,'issues':[]}]}],'choices':{'c1:0':{'text':rewritten,'status':'accepted'}}}
+    body={'step':'evaluate','cv':original,'db':{'affiliations':[{'id':'a1','organization':'Example Company','title':'Analyst Intern','type':'intern','start_date':None,'end_date':None}],'cards':[card]},'jd':{'role_title':'Data Analyst','domain':'Analytics','seniority':'Entry','requirements':[{'id':'r1','text':'Build Python reports to help operations teams make decisions','kind':'responsibility','priority':'high','keywords':['python','reporting','operations']}]},'gaps':[],'rewritten':[{'card_id':'c1','bullets':[{'original_bullet_id':'cvb1','text':rewritten,'source_ids':['f1','o1'],'ok':True,'issues':[]}]}],'choices':{'c1:cvb1':{'text':rewritten,'status':'accepted'}}}
     return {'id':case_id,'body':body}
 
 CASES=[
