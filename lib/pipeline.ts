@@ -1,4 +1,5 @@
 import { orderResumeCards, type ResumeSortMode } from "./resume-order";
+import { docToMarkdown, type ResumeDoc, type ResumeEntry, type ResumeSection } from "./resume-doc";
 import type { CardEvidenceStatus } from "./resume-selection";
 import { extractOriginalBullets, normalizedBullet, renderOriginalBullets, uniqueOriginals } from "./original-bullets";
 import { SAMPLE_CV } from "./sample";
@@ -297,9 +298,12 @@ export async function askQuestion(db: ExperienceDB, gap: Gap, req: Requirement, 
   const out = await callStructured(
     QuestionOutput,
     [
-      "You are a warm, curious career coach interviewing a job seeker to uncover real experience for their resume.",
-      "Ask exactly ONE question in Chinese, conversational (not an interrogation), specific to the requirement and to what is already known.",
-      "If the status is 'weak', ask for the missing specifics (what they personally did, tools/methods, a measurable result). If 'unknown', first ask whether they have done anything like it, and say it is fine to answer 'no'.",
+      "You interview a job seeker to uncover real experience for their resume.",
+      "Ask exactly ONE question in Chinese, specific to the requirement and to what is already known. Keep it concise: at most 3 short sentences, about 80 Chinese characters.",
+      "Structure: (1) name the specific experience and ask the core question; (2) optionally list the quantifiable details that would help, as short nouns. Do not add reassurance phrases such as '没有也没关系'.",
+      "No filler or small talk (e.g. '我很好奇', '比如', '跟我说说', '完全'). Do not restate background the user already knows.",
+      "Example of the target style (copy the length and structure only, never its content): 你在瑞德赛恩的回归分析影响了哪个决定？有没有哪条保护策略因你的结论被提出或采纳？数据量、关键发现、报告使用方等如有可量化信息也请说明。",
+      "If the status is 'weak', ask for the missing specifics (what they personally did, tools/methods, a measurable result). If 'unknown', first ask whether they have done anything like it.",
       "Never suggest numbers or claims for the user to adopt. Do not mention internal terms like status or gap.",
       "The user has already answered the earlier questions listed below. Never ask again about anything they already answered (including tools or topics they said they have not used); if the requirement overlaps with an earlier answer, narrow the question to what is still unknown, and do not mention tools or topics they already ruled out.",
     ].join("\n"),
@@ -559,6 +563,7 @@ export async function rewriteBullets(
 
 export interface ResumeOutput {
   markdown: string;
+  doc: ResumeDoc; // 网页预览、PDF、Word 都从这份结构生成，内容和 markdown 一致
   warnings: string[];
   coverage: Record<string, number>;
   experienceBulletCount: number;
@@ -566,19 +571,14 @@ export interface ResumeOutput {
 }
 
 // 教育经历直接照搬 CV 解析结果，不经过 AI 改写，所以不需要事实校验。
-export function renderEducation(education: Education[]): string[] {
-  if (!education.length) return [];
-  const lines = ["## EDUCATION", ""];
-  for (const e of education) {
-    const degree = [e.degree, e.field].filter(Boolean).join(", ");
-    const dates = [e.start_date, e.end_date].filter(Boolean).join(" – ");
-    const head = [`**${e.school}**`, e.location].filter(Boolean).join(", ");
-    lines.push(`${head}${degree ? ` — ${degree}` : ""}${dates ? ` (${dates})` : ""}`);
-    if (e.gpa) lines.push(`- GPA: ${e.gpa}`);
-    for (const d of e.details) lines.push(`- ${d}`);
-    lines.push("");
-  }
-  return lines;
+export function educationEntries(education: Education[]): ResumeEntry[] {
+  return education.map((e) => ({
+    title: e.school,
+    location: e.location,
+    subtitle: [e.degree, e.field].filter(Boolean).join(", "),
+    dates: [e.start_date, e.end_date].filter(Boolean).join(" – "),
+    bullets: [...(e.gpa ? [`GPA: ${e.gpa}`] : []), ...e.details],
+  }));
 }
 
 export function assembleResume(
@@ -588,17 +588,17 @@ export function assembleResume(
   rewritten: RewrittenCard[],
   sortMode: ResumeSortMode = "relevance",
 ): ResumeOutput {
-  const lines: string[] = [`# Targeted resume — ${jd.role_title}`, ""];
-  lines.push(...renderEducation(db.education ?? []));
-  lines.push("## EXPERIENCE", "");
+  const sections: ResumeSection[] = [];
+  const education = educationEntries(db.education ?? []);
+  if (education.length) sections.push({ heading: "EDUCATION", entries: education, text: null });
+
+  const experience: ResumeEntry[] = [];
   let experienceBulletCount = 0;
-  let experienceCount = 0;
   const seen = new Set<string>();
   for (const rc of orderResumeCards(rewritten, db, sortMode, rankCards(db, jd, gaps))) {
     const card = db.cards.find((c) => c.id === rc.card_id);
     if (!card) continue;
     const aff = db.affiliations.find((a) => a.id === card.affiliation_id);
-    const dates = [aff?.start_date, aff?.end_date].filter(Boolean).join(" – ");
     const okBullets = rc.bullets.filter((b) => {
       if (!b.ok) return false;
       const key = `${card.affiliation_id}:${normalizedBullet(b.text)}`;
@@ -606,22 +606,30 @@ export function assembleResume(
       seen.add(key); return true;
     });
     if (!okBullets.length) continue;
-    experienceCount++;
-    lines.push(`**${card.name}** — ${[aff?.title, aff?.organization].filter(Boolean).join(", ")}${dates ? ` (${dates})` : ""}`);
-    for (const b of okBullets) { lines.push(`- ${b.text.replace(/\s*\n\s*/g, " ")}`); experienceBulletCount++; }
-    lines.push("");
+    experience.push({
+      title: card.name,
+      location: null,
+      subtitle: [aff?.title, aff?.organization].filter(Boolean).join(", "),
+      dates: [aff?.start_date, aff?.end_date].filter(Boolean).join(" – "),
+      bullets: okBullets.map((b) => b.text.replace(/\s*\n\s*/g, " ")),
+    });
+    experienceBulletCount += okBullets.length;
   }
+  sections.push({ heading: "EXPERIENCE", entries: experience, text: null });
+
   const skillsCard = db.cards.find((c) => db.affiliations.find((a) => a.id === c.affiliation_id)?.type === "skills_list");
   const keywords = jd.requirements.flatMap((r) => r.keywords);
   const skills = (skillsCard?.skills ?? [])
     .filter((s) => s.status === "user_confirmed")
     .sort((a, b) => Number(keywords.some((k) => b.text.toLowerCase().includes(k))) - Number(keywords.some((k) => a.text.toLowerCase().includes(k))));
-  if (skills.length) lines.push("## SKILLS", "", skills.map((s) => s.text).join(", "), "");
+  if (skills.length) sections.push({ heading: "SKILLS", entries: [], text: skills.map((s) => s.text).join(", ") });
+
+  const doc: ResumeDoc = { title: `Targeted resume — ${jd.role_title}`, sections };
 
   const warnings: string[] = [];
   for (const rc of rewritten) for (const b of rc.bullets) if (!b.ok) warnings.push(`已拦截一条 bullet：「${b.text}」— ${b.issues.join("；")}`);
   for (const c of db.cards) for (const o of c.outcomes) if (o.status !== "user_confirmed") warnings.push(`「${c.name}」里的结果「${o.note}」尚未确认，没有写入简历`);
   const coverage: Record<string, number> = { covered: 0, weak: 0, unknown: 0, true_gap: 0 };
   for (const g of gaps) coverage[g.status]++;
-  return { markdown: lines.join("\n"), warnings, coverage, experienceBulletCount, experienceCount };
+  return { markdown: docToMarkdown(doc), doc, warnings, coverage, experienceBulletCount, experienceCount: experience.length };
 }

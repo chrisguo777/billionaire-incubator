@@ -77,6 +77,8 @@ git push -u origin 你的名字/做什么
 |---|---|
 | `lib/schema.ts` | 经历库类型与各步骤的 Zod 输出 schema（见 `docs/schema-v1.md`） |
 | `lib/pipeline.ts` | 各步骤逻辑：AI 步骤（解析、JD 分析、匹配、提问、抽取、改写）和代码规则步骤（缺口检测、选问题、排序、事实校验） |
+| `lib/resume-doc.ts` | 简历的结构化表示；Markdown 和网页预览 / PDF 用的 HTML 都从这里生成 |
+| `lib/resume-docx.ts` | 把简历生成 Word（.docx），在浏览器里运行 |
 | `lib/llm.ts` | 结构化输出调用（Anthropic SDK + Zod），live/mock 切换 |
 | `lib/mock.ts` | 无 Key 时的内置示例逻辑 |
 | `lib/experience-target.ts` / `lib/experience-discovery.ts` | 三段经历目标、补充追问与回答抽取；确认没有其他经历后允许按现有数量继续 |
@@ -105,7 +107,7 @@ git push -u origin 你的名字/做什么
 
 ## 尚未实现
 
-扫描件/图片版 PDF 的 OCR（目前只支持可复制文字的 PDF）、联系方式、数据库持久化（状态只在浏览器里）、语言选择、拖拽组装、导出 PDF/DOCX、追问停止条件的最终方案。
+扫描件/图片版 PDF 的 OCR（目前只支持可复制文字的 PDF）、联系方式、数据库持久化（状态只在浏览器里）、语言选择、拖拽组装、追问停止条件的最终方案。
 
 ## 简历经历排序
 
