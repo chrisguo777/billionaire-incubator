@@ -1,7 +1,8 @@
 # 给 AI 助手的项目说明
 
 > 读者：加入项目的成员的 AI 助手（Claude Code、Codex 等）。请先读完本文，再动手。
-> 最后更新：2026-10-16（会议前）。以仓库里的文件为准；本文与代码不一致时，以代码为准，并告诉用户。
+> 最后更新：2026-11-02（合并 #6、#7、#9、#11、#12 之后）。以仓库里的文件为准；本文与代码不一致时，以代码为准，并告诉用户。
+> **开始工作前先 `git pull` 拿最新 main，再读 `CHANGELOG.md` 最上面一段**：里面写了最近合并了什么、怎么验证的、还有哪些已知问题。
 
 ## 1. 项目是什么
 
@@ -43,13 +44,14 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 
 | 步骤 | AI 做 | 代码规则做 |
 |---|---|---|
-| 简历解析 | 把文字拆成经历 → 卡片 → 格子 | 分配 id；CV 内容一律标"已确认"、出处 cv_parse；用 Zod 校验格式 |
+| 简历解析 | 把文字拆成经历 → 卡片 → 格子，并把每张卡片对应到完整的原句 | 分配 id；切分原句（`extractOriginalBullets`）；CV 内容一律标"已确认"、出处 cv_parse；用 Zod 校验格式 |
 | JD 分析 | 把 JD 拆成带优先级的要求 | — |
 | JD 与经历匹配 | 为每条要求找证据，必须引用事实 id | `detectGaps`：丢弃不存在的 id，只认"已确认"的证据 |
 | 缺口检测 | — | 先看用户是否答过"没有"（→ True Gap）；有"我的动作"且卡片有已确认成果 → Covered；有证据但不满足 → Weak；否则 Unknown |
-| 针对性追问 | 措辞成一句问话；把回答整理成事实；挖掘未写入简历的课程/小组/项目等经历 | `pickGap`：只挑 Weak/Unknown 且没问过的，按优先级排，Weak 先于 Unknown；JD 问题最多 3 题。不足 3 段时另行补充追问，达到目标或确认没有其他经历就停止；没有其他经历时不强制三段；成果仍标"待确认" |
-| 经历排序与保留 | — | `rankCards` 按已确认的匹配证据加权排序，全部经历默认保留；证据不足只作提示，用户勾选决定保留哪些经历 |
-| Bullet 改写 | 只用已确认事实改写，并标注来源 id | `checkBullet`：无来源、引用未确认事实、出现事实里没有的数字，该条被拦截 |
+| 针对性追问 | 措辞成一句简短的问话（提示词要求 ≤3 句、约 80 字，不保证）；把回答整理成事实 | `pickGap`：只挑 Weak/Unknown 且没问过的，按优先级排，Weak 先于 Unknown；JD 问题最多 3 题；成果仍标"待确认"。「不足三段经历时另行补充追问」已实现但暂时关闭（`lib/experience-target.ts` 里 `TARGET_EXPERIENCES = 0`，见 CHANGELOG） |
+| 经历排序与保留 | — | `rankCards` 按已确认的匹配证据加权排序，全部经历默认保留；证据不足只作提示（证据情况分三档：已有匹配证据 / 证据不足 / 暂无匹配证据），用户勾选决定保留哪些经历；顺序由用户选「JD 匹配度」或「经历时间」（`lib/resume-order.ts`） |
+| Bullet 改写 | 对每条原句给一条改写建议（保持原语言，不需要改就保留原文），并标注来源 id；追问新增的内容另给新 bullet | `checkBullet`：无来源、引用未确认事实、出现来源里没有的数字，该条被拦截；用户未操作时简历保留原句，点「接受这条」才替换，「排除」才删除整条 |
+| 生成简历 | — | `assembleResume`：先生成结构化的 `ResumeDoc`，Markdown、网页预览、PDF（浏览器打印）、Word 都从它生成，内容一致 |
 
 ## 5. 经历库 schema
 
@@ -61,33 +63,38 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 
 技术栈：Next.js + TypeScript + Zod + Anthropic SDK。运行方式见 `README.md`。
 
-- `lib/pipeline.ts`：各步骤逻辑；`lib/schema.ts`：类型与 Zod schema；`lib/llm.ts`：模型调用与 live/mock 切换；`lib/mock.ts`：无 key 时的假数据；`app/api/step/route.ts`：无状态 API；`app/page.tsx`：单页界面（已标注每步由 AI / 代码规则 / 用户完成）。
+- `lib/pipeline.ts`：各步骤逻辑；`lib/schema.ts`：类型与 Zod schema；`lib/llm.ts`：模型调用与 live/mock 切换；`lib/mock.ts`：无 key 时的假数据；`app/api/step/route.ts`：无状态 API，按 step 分发（parse / jd / analyze / question / answer / evaluate / review / finish）；`app/api/resume/route.ts`：上传 PDF / Word / TXT 并提取文字；`app/page.tsx`：单页界面（已标注每步由 AI / 代码规则 / 用户完成）。
+- 其他模块：`lib/original-bullets.ts` 切分并保存原简历的完整 bullet；`lib/review.ts`、`lib/review-types.ts` 逐条审阅（接受 / 编辑 / 排除）后重新校验并组装简历；`lib/resume-order.ts`、`lib/resume-selection.ts` 经历排序方式与保留选择；`lib/resume-doc.ts`、`lib/resume-docx.ts` 结构化简历到预览 / PDF / Word；`lib/evaluation.ts`、`lib/evaluation-schema.ts` 简历质量评估（六个维度，引用由代码核验）；`lib/experience-target.ts`、`lib/experience-discovery.ts` 「补足三段经历」追问（目前关闭）。
+- `tests/`：回归脚本，没有测试框架，手动运行，例如 `node tests/bullet-review.cjs`（需要 Node 24+；不调用付费 API，`tests/evaluation/` 里的重复评估脚本除外）。`tests/experience-discovery.cjs` 断言三段经历的行为，在该功能关闭期间会失败。
 - **mock 模式不读用户输入**，只返回内置示例。想用真实 CV 和 JD 必须用 live（需要 `ANTHROPIC_API_KEY`）。
-- live 模式已用真实 key 跑过（Paxton 的 CV + 真实 JD），解析、匹配、追问阶段能工作；改写与生成简历阶段在 live 下是否稳定，尚未系统验证。
+- live 模式已用真实 key 跑过：解析、匹配、追问、改写、逐条审阅、排序、预览与导出已手动走通（2026-11-02，Paxton 的会话）；评估在 2026-10-25 走通。样本只有 1–2 份简历，稳定性尚未系统验证。
 
 ### 已拍板
 
 - CV 里解析出来的内容算"用户已确认"。
 - 对话里得到的数字先标"待确认"，用户点确认才能进简历；简历只用已确认事实。
 - 缺口状态由代码规则判断；v0 不让模型自己决定下一步。
-- demo 阶段 JD 针对性追问最多 3 题；不足三段经历时，补充经历追问单独进行，明确没有其他经历后按现有数量继续。
+- demo 阶段 JD 针对性追问最多 3 题。「不足三段经历时另行补充追问」已实现但暂时关闭，是否重开见下方「未拍板」。
 
 ### 未拍板
 
 - 追问的最终停止条件；是否把 schema 合并稿与团队确认的节奏；demo 的最终受众和演示程度。
 - 挖掘阶段看不看 JD（Paxton：JD 驱动；Christine：先通用挖掘，再按 JD 补挖）。
 - "Agent"在我们这里具体指什么。
+- 「补足三段经历」追问是否保留、何时重开（目前 `TARGET_EXPERIENCES = 0`）；它的话术和「不足三段时拒绝评估」的门槛没有团队确认。
+- Ziyue 的 #5 里没带入的三项（同一段经历内 bullet 按重要程度排序、规范检查表 `lib/standards.ts`、改写提示词）是否需要，以及如何与「保留原句」兼容（这三项只在 #5 分支里，没有合并）；Christine 的 #10（隐私模式与占位 Word 导出）暂缓。
 - 中英双语、拖拽组装、数据库持久化：都推后。（PDF / Word 导出已实现，见 `lib/resume-doc.ts`、`lib/resume-docx.ts`）
 
 ### 已知问题（请不要假装它们不存在）
 
 1. **追问可能重复**：JD 分析可能把相近的要求拆成两条（如"做仪表盘"和"用 Tableau"）。已让提问步骤看到之前的问答，但这只是提示词约束，不保证。
 2. **"已覆盖"的标准偏松**：只要有"我的动作"且同一张卡片上有任何已确认的成果即可，成果不要求有数字，也不要求与这条要求相关。
-3. **事实校验只查数字**：AI 把"参与"改成"主导"、把团队动作写成个人动作，目前拦不住；中文数字也不检查。
+3. **事实校验只查数字**：AI 把"参与"改成"主导"、把团队动作写成个人动作，目前拦不住；中文数字既会误拦（事实写「一页半」，模型写成 1.5 会被拦），也会漏查（bullet 里的「三倍」不检查）。
 4. **对话里的文字类事实直接标"已确认"**，只有数字类成果标"待确认"。
 5. 匹配步骤有 AI 波动：同一份数据两次匹配可能引用不同的事实。
 6. `workflow-v1.md` 写的"解析不合格自动重试"，代码里没有实现，校验失败就是报错。
-7. 简历里没有联系方式（教育经历已加入：CV 解析时单独存进 `education`，生成简历时照搬原文放在 EXPERIENCE 之前，不经过 AI 改写；暂不参与 JD 匹配）；只支持可复制文字的 PDF；状态只存在浏览器里，刷新即丢失。
+7. 导出的简历没有姓名和联系方式抬头（教育经历已加入：CV 解析时单独存进 `education`，生成简历时照搬原文放在 EXPERIENCE 之前，不经过 AI 改写；暂不参与 JD 匹配）；上传支持可复制文字的 PDF、Word（.docx）和 TXT，扫描件不支持；状态只存在浏览器里，刷新即丢失。
+8. 其他已知问题（改写稿与原句相同、原句粘着下一段经历的标题等）见 `CHANGELOG.md` 最新一段的「已知问题」，那里最新、最完整。
 
 ## 7. 协作规则
 
@@ -97,8 +104,10 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 - **不要替团队其他人做决定**；涉及 C、S、J 的设计，只做对比和建议。
 - 没有用户明确要求，**不要 commit、不要 push、不要装额外依赖**。
 - **分支规则**：`main` 受保护，不能直接推送。每个成员在自己的 branch 上开发（命名 `名字/做什么`，如 `ziyue/ats-rules`），用户要求推送时只推自己的 branch，再通过 Pull Request 合并，由 Paxton 审阅。开始改动前先确认当前不在 `main` 上。具体命令见 `README.md`。
+- 开始工作前先 `git pull` 拿最新 main，并读 `CHANGELOG.md` 最上面一段；依赖有变化时要 `npm install`。
+- PR 合并后，由 Paxton 在 `CHANGELOG.md` 最上面加一段（日期、PR 编号、新增、修复、验证、已知问题）。
 - 永远不要把 API key 写进代码、文档、聊天或提交；key 只放在 `.env.local`（已被 git 忽略）。
-- 前端和产品细节（选语言、拖拽、预览、导出）先放一放，以 workflow 和数据结构为主。
+- 前端和产品细节（选语言、拖拽）先放一放，以 workflow 和数据结构为主。
 
 ## 8. 其他说明
 
