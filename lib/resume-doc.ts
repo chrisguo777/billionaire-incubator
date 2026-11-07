@@ -3,7 +3,8 @@
 export interface ResumeEntry {
   title: string; // 加粗的主标题：经历名称或学校
   location: string | null; // 仅教育经历使用，紧跟在学校后面
-  subtitle: string; // 职位与机构，或学位与专业
+  position?: string;
+  subtitle: string; // 机构或其他经历信息，也可用于学位与专业
   dates: string;
   bullets: string[];
 }
@@ -16,16 +17,32 @@ export interface ResumeSection {
 
 export interface ResumeDoc {
   title: string;
+  contactLines?: string[];
+  fileTitle?: string;
   sections: ResumeSection[];
 }
 
+function renderSubtitle(
+  entry: ResumeEntry,
+  renderText: (text: string) => string,
+  renderPosition = renderText,
+): string {
+  return [
+    entry.position ? renderPosition(entry.position) : "",
+    entry.subtitle ? renderText(entry.subtitle) : "",
+  ].filter(Boolean).join(", ");
+}
+
+const identity = (text: string) => text;
+
 export function docToMarkdown(doc: ResumeDoc): string {
-  const lines: string[] = [`# ${doc.title}`, ""];
+  const lines: string[] = [`# ${doc.title}`, "", ...(doc.contactLines ?? []).flatMap((line) => [line, ""])];
   for (const s of doc.sections) {
     lines.push(`## ${s.heading}`, "");
     for (const e of s.entries) {
       const head = `**${e.title}**${e.location ? `, ${e.location}` : ""}`;
-      lines.push(`${head}${e.subtitle ? ` — ${e.subtitle}` : ""}${e.dates ? ` (${e.dates})` : ""}`);
+      const subtitle = renderSubtitle(e, identity, (position) => `**${position}**`);
+      lines.push(`${head}${subtitle ? ` — ${subtitle}` : ""}${e.dates ? ` (${e.dates})` : ""}`);
       for (const b of e.bullets) lines.push(`- ${b}`);
       lines.push("");
     }
@@ -37,7 +54,7 @@ export function docToMarkdown(doc: ResumeDoc): string {
 /** 纯文本，用于字数统计和关键词检查。 */
 export function docToPlainText(doc: ResumeDoc): string {
   return doc.sections
-    .flatMap((s) => [s.heading, ...s.entries.flatMap((e) => [e.title, e.location ?? "", e.subtitle, e.dates, ...e.bullets]), s.text ?? ""])
+    .flatMap((s) => [s.heading, ...s.entries.flatMap((e) => [e.title, e.location ?? "", renderSubtitle(e, identity), e.dates, ...e.bullets]), s.text ?? ""])
     .filter(Boolean)
     .join("\n");
 }
@@ -53,7 +70,7 @@ export function docToHTML(doc: ResumeDoc): string {
         .map(
           (e) => `<div class="entry">
   <div class="head"><span class="title"><b>${esc(e.title)}</b>${e.location ? `, ${esc(e.location)}` : ""}</span><span class="dates">${esc(e.dates)}</span></div>
-  ${e.subtitle ? `<div class="subtitle">${esc(e.subtitle)}</div>` : ""}
+  ${e.position || e.subtitle ? `<div class="subtitle">${renderSubtitle(e, esc, (position) => `<strong>${esc(position)}</strong>`)}</div>` : ""}
   ${e.bullets.length ? `<ul>${e.bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
 </div>`,
         )
@@ -64,12 +81,17 @@ export function docToHTML(doc: ResumeDoc): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>${esc(doc.title)}</title>
 <style>
-  @page { size: Letter; margin: 0.6in; }
+  @page { size: Letter; margin: 0 0.6in; }
   * { box-sizing: border-box; }
   html { background: #fff; }
   body { margin: 0; padding: 0.6in; color: #111; background: #fff; font: 10.5pt/1.35 Calibri, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
-  @media print { body { padding: 0; } }
-  h1 { font-size: 16pt; margin: 0 0 8pt; text-align: center; }
+  @media print {
+    body { padding: 0; }
+    /* Keep space inside each page while leaving no room for browser headers and footers. */
+    .resume { padding-block: 0.6in; box-decoration-break: clone; }
+  }
+  h1 { font-size: 16pt; margin: 0 0 4pt; text-align: center; }
+  .contact { margin: 0; text-align: center; overflow-wrap: anywhere; }
   h2 { font-size: 10.5pt; letter-spacing: 0.08em; margin: 10pt 0 4pt; padding-bottom: 2pt; border-bottom: 1px solid #111; }
   .entry { margin: 0 0 6pt; break-inside: avoid; }
   .head { display: flex; justify-content: space-between; gap: 12pt; }
@@ -79,12 +101,50 @@ export function docToHTML(doc: ResumeDoc): string {
   li { margin: 1pt 0; }
   .text { margin: 0; }
 </style></head>
-<body><h1>${esc(doc.title)}</h1>
+<body><main class="resume"><div class="resume-content"><header><h1>${esc(doc.title)}</h1>
+${(doc.contactLines ?? []).map((line) => `<p class="contact">${esc(line)}</p>`).join("\n")}</header>
 ${body}
-</body></html>`;
+</div></main></body></html>`;
+}
+
+/** Fit the preview at the physical Letter print width, even in a narrow browser window. */
+export function fitResumeToOnePage(document: Document): number {
+  const resume = document.querySelector<HTMLElement>(".resume");
+  const content = document.querySelector<HTMLElement>(".resume-content");
+  if (!resume || !content) return 1;
+
+  const pageMargin = 0.6;
+  const printableHeight = (11 - 2 * pageMargin) * 96 - 2; // Leave room for browser rounding.
+  resume.style.width = `${8.5 - 2 * pageMargin}in`;
+  content.style.display = "flow-root";
+  content.style.overflowWrap = "anywhere";
+
+  const measure = (scale: number) => {
+    content.style.zoom = String(scale);
+    return content.getBoundingClientRect().height;
+  };
+
+  let scale = 1;
+  const originalHeight = measure(1);
+  if (originalHeight > printableHeight) {
+    let low = Math.min(1, printableHeight / originalHeight) * 0.99;
+    let high = 1;
+    while (measure(low) > printableHeight) low /= 2;
+    for (let i = 0; i < 12; i++) {
+      const mid = (low + high) / 2;
+      if (measure(mid) <= printableHeight) low = mid;
+      else high = mid;
+    }
+    scale = low;
+    measure(scale);
+  }
+
+  // Let the on-screen preview stay responsive; the print page provides the measured width.
+  resume.style.removeProperty("width");
+  return scale;
 }
 
 export function resumeFileName(doc: ResumeDoc, ext: string): string {
-  const base = doc.title.replace(/[\\/:*?"<>|—–]+/g, " ").replace(/\s+/g, "_").replace(/^_+|_+$/g, "");
+  const base = (doc.fileTitle ?? doc.title).replace(/[\\/:*?"<>|—–]+/g, " ").replace(/\s+/g, "_").replace(/^_+|_+$/g, "");
   return `${base || "resume"}.${ext}`;
 }

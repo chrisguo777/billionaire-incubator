@@ -49,6 +49,7 @@ export interface Affiliation {
   id: string;
   organization: string;
   title: string | null;
+  title_is_position?: boolean;
   type: AffiliationType;
   start_date: string | null;
   end_date: string | null;
@@ -86,7 +87,13 @@ export interface Education {
   details: string[]; // 荣誉、相关课程、论文等，逐条照搬 CV
 }
 
+const ResumeHeader = z.object({
+  name: z.string().nullable(),
+  contactLines: z.array(z.string()),
+});
+
 export interface ExperienceDB {
+  header?: z.infer<typeof ResumeHeader>;
   affiliations: Affiliation[];
   cards: Card[];
   education: Education[];
@@ -102,6 +109,7 @@ const OutcomeDraft = z.object({
 });
 
 export const ParsedCV = z.object({
+  header: ResumeHeader,
   education: z.array(
     z.object({
       school: z.string(),
@@ -118,6 +126,7 @@ export const ParsedCV = z.object({
     z.object({
       organization: z.string(),
       title: z.string().nullable(),
+      title_is_position: z.boolean(),
       type: z.enum([
         "intern",
         "course_project",
