@@ -1,3 +1,4 @@
+import type { Lang } from "./language";
 import type {
   AnswerExtraction,
   ExperienceDB,
@@ -181,7 +182,12 @@ export function mockMatch(db: ExperienceDB, jd: JDAnalysis): MatchOutput {
   };
 }
 
-export function mockQuestion(gap: Gap, req: Requirement): string {
+export function mockQuestion(gap: Gap, req: Requirement, lang: Lang = "zh"): string {
+  if (lang === "en") {
+    return gap.status === "weak"
+      ? `The job asks for "${req.text}". Your experience shows something related, but details are missing. What did you personally do, which methods or tools did you use, and was there a measurable result?`
+      : `The job asks for "${req.text}". Have you done anything related in a course, project, internship or research? If so, what did you do?`;
+  }
   if (gap.status === "weak") {
     return `JD 要求「${req.text}」。你的经历库里有相关内容，但细节不够。能具体说说你在这件事里实际做了什么、用了哪些方法或工具、最后有没有可以量化的结果吗？`;
   }

@@ -64,7 +64,8 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 技术栈：Next.js + TypeScript + Zod + Anthropic SDK。运行方式见 `README.md`。
 
 - `lib/pipeline.ts`：各步骤逻辑；`lib/schema.ts`：类型与 Zod schema；`lib/llm.ts`：模型调用与 live/mock 切换；`lib/mock.ts`：无 key 时的假数据；`app/api/step/route.ts`：无状态 API，按 step 分发（parse / jd / analyze / question / answer / evaluate / review / finish）；`app/api/resume/route.ts`：上传 PDF / Word / TXT 并提取文字；`app/page.tsx`：单页界面（已标注每步由 AI / 代码规则 / 用户完成）。
-- 其他模块：`lib/original-bullets.ts` 切分并保存原简历的完整 bullet；`lib/review.ts`、`lib/review-types.ts` 逐条审阅（接受 / 编辑 / 排除）后重新校验并组装简历；`lib/resume-order.ts`、`lib/resume-selection.ts` 经历排序方式与保留选择；`lib/resume-doc.ts`、`lib/resume-docx.ts` 结构化简历到预览 / PDF / Word；`lib/evaluation.ts`、`lib/evaluation-schema.ts` 简历质量评估（六个维度，引用由代码核验）；`lib/experience-target.ts`、`lib/experience-discovery.ts` 「补足三段经历」追问（目前关闭）。
+- 其他模块：`lib/original-bullets.ts` 切分并保存原简历的完整 bullet；`lib/review.ts`、`lib/review-types.ts` 逐条审阅（接受 / 编辑 / 排除）后重新校验并组装简历；`lib/resume-order.ts`、`lib/resume-selection.ts` 经历排序方式与保留选择；`lib/resume-doc.ts`、`lib/resume-docx.ts` 结构化简历到预览 / PDF / Word；`lib/evaluation.ts`、`lib/evaluation-schema.ts` 简历质量评估（六个维度，引用由代码核验）；`lib/experience-target.ts`、`lib/experience-discovery.ts` 「补足三段经历」追问（目前关闭）；`lib/language.ts` 语言规则：识别简历目标语言、检查非目标语言内容、按语言给出章节标题。
+- 语言：**沟通语言**由用户在第 1 节选（中文 / English），只决定追问用什么语言；**简历目标语言**在解析时根据上传简历自动识别，存在经历库的 `resume_language` 字段，用户可在第 2 节修改。回答抽取成事实、改写 bullet、最终简历章节标题都统一用目标语言；最终简历里不是目标语言的内容由代码列为警告（英文简历出现任何汉字；中文简历出现以英文为主的整句）。回归测试：`tests/language.cjs`。
 - `tests/`：回归脚本，没有测试框架，手动运行，例如 `node tests/bullet-review.cjs`（需要 Node 24+；不调用付费 API，`tests/evaluation/` 里的重复评估脚本除外）。`tests/experience-discovery.cjs` 断言三段经历的行为，在该功能关闭期间会失败。
 - **mock 模式不读用户输入**，只返回内置示例。想用真实 CV 和 JD 必须用 live（需要 `ANTHROPIC_API_KEY`）。
 - live 模式已用真实 key 跑过：解析、匹配、追问、改写、逐条审阅、排序、预览与导出已手动走通（2026-11-02，Paxton 的会话）；评估在 2026-10-25 走通。样本只有 1–2 份简历，稳定性尚未系统验证。
@@ -83,7 +84,7 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 - "Agent"在我们这里具体指什么。
 - 「补足三段经历」追问是否保留、何时重开（目前 `TARGET_EXPERIENCES = 0`）；它的话术和「不足三段时拒绝评估」的门槛没有团队确认。
 - Ziyue 的 #5 里没带入的三项（同一段经历内 bullet 按重要程度排序、规范检查表 `lib/standards.ts`、改写提示词）是否需要，以及如何与「保留原句」兼容（这三项只在 #5 分支里，没有合并）；Christine 的 #10（隐私模式与占位 Word 导出）暂缓。
-- 中英双语、拖拽组装、数据库持久化：都推后。（PDF / Word 导出已实现，见 `lib/resume-doc.ts`、`lib/resume-docx.ts`）
+- 拖拽组装、数据库持久化：都推后。（中英双语：沟通语言与简历目标语言分开设置，见 `lib/language.ts`）（PDF / Word 导出已实现，见 `lib/resume-doc.ts`、`lib/resume-docx.ts`）
 
 ### 已知问题（请不要假装它们不存在）
 
@@ -107,7 +108,7 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 - 开始工作前先 `git pull` 拿最新 main，并读 `CHANGELOG.md` 最上面一段；依赖有变化时要 `npm install`。
 - PR 合并后，由 Paxton 在 `CHANGELOG.md` 最上面加一段（日期、PR 编号、新增、修复、验证、已知问题）。
 - 永远不要把 API key 写进代码、文档、聊天或提交；key 只放在 `.env.local`（已被 git 忽略）。
-- 前端和产品细节（选语言、拖拽）先放一放，以 workflow 和数据结构为主。
+- 前端和产品细节（拖拽等）先放一放，以 workflow 和数据结构为主。
 
 ## 8. 其他说明
 

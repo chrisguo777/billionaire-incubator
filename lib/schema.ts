@@ -90,6 +90,9 @@ export interface ExperienceDB {
   affiliations: Affiliation[];
   cards: Card[];
   education: Education[];
+  // 简历目标语言：解析时根据上传的简历自动识别，用户可以在页面上改。
+  // 回答抽取、改写和最终简历都统一用这个语言；旧数据没有这个字段时按英文处理。
+  resume_language?: "zh" | "en";
 }
 
 // ---------- LLM output schemas (Zod; ids are assigned by code afterwards) ----------

@@ -81,6 +81,7 @@ git push -u origin 你的名字/做什么
 | `lib/resume-docx.ts` | 把简历生成 Word（.docx），在浏览器里运行 |
 | `lib/llm.ts` | 结构化输出调用（Anthropic SDK + Zod），live/mock 切换 |
 | `lib/mock.ts` | 无 Key 时的内置示例逻辑 |
+| `lib/language.ts` | 语言规则：识别简历目标语言、检查非目标语言内容、按语言给出章节标题 |
 | `lib/experience-target.ts` / `lib/experience-discovery.ts` | 三段经历目标、补充追问与回答抽取；确认没有其他经历后允许按现有数量继续 |
 | `app/api/step/route.ts` | 无状态 API，状态由前端持有 |
 | `app/api/resume/route.ts` | PDF / Word（.docx）/ TXT 上传并提取文字（≤10MB）；PDF 用 unpdf，Word 用 mammoth，TXT 支持 UTF-8、带 BOM 的 UTF-16 和 GB18030，结果填回文本框供检查 |
@@ -107,7 +108,7 @@ git push -u origin 你的名字/做什么
 
 ## 尚未实现
 
-扫描件/图片版 PDF 的 OCR（目前只支持可复制文字的 PDF）、联系方式、数据库持久化（状态只在浏览器里）、语言选择、拖拽组装、追问停止条件的最终方案。
+扫描件/图片版 PDF 的 OCR（目前只支持可复制文字的 PDF）、联系方式、数据库持久化（状态只在浏览器里）、拖拽组装、追问停止条件的最终方案。
 
 ## 简历经历排序
 
