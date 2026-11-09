@@ -238,3 +238,39 @@ export function mockRewrite(db: ExperienceDB, cardIds: string[]): RewriteOutput 
     }),
   };
 }
+
+// ---- Company autocomplete and job link mocks (used when LOGO_DEV_SECRET_KEY or the model key is missing) ----
+
+export interface MockCompany { name: string; domain: string }
+
+export const MOCK_COMPANIES: MockCompany[] = [
+  { name: "Amazon", domain: "amazon.com" }, { name: "Amazon Web Services", domain: "aws.amazon.com" },
+  { name: "AMD", domain: "amd.com" }, { name: "American Express", domain: "americanexpress.com" },
+  { name: "Amgen", domain: "amgen.com" }, { name: "Apple", domain: "apple.com" },
+  { name: "Airbnb", domain: "airbnb.com" }, { name: "Adobe", domain: "adobe.com" },
+  { name: "Anthropic", domain: "anthropic.com" }, { name: "Bank of America", domain: "bankofamerica.com" },
+  { name: "Capital One", domain: "capitalone.com" }, { name: "Databricks", domain: "databricks.com" },
+  { name: "Deloitte", domain: "deloitte.com" }, { name: "DoorDash", domain: "doordash.com" },
+  { name: "Genentech", domain: "gene.com" }, { name: "Goldman Sachs", domain: "goldmansachs.com" },
+  { name: "Google", domain: "google.com" }, { name: "IBM", domain: "ibm.com" },
+  { name: "Johnson & Johnson", domain: "jnj.com" }, { name: "JPMorgan Chase", domain: "jpmorganchase.com" },
+  { name: "Meta", domain: "meta.com" }, { name: "Microsoft", domain: "microsoft.com" },
+  { name: "Moderna", domain: "modernatx.com" }, { name: "Netflix", domain: "netflix.com" },
+  { name: "NVIDIA", domain: "nvidia.com" }, { name: "Oracle", domain: "oracle.com" },
+  { name: "Pfizer", domain: "pfizer.com" }, { name: "Salesforce", domain: "salesforce.com" },
+  { name: "Spotify", domain: "spotify.com" }, { name: "Stripe", domain: "stripe.com" },
+  { name: "Tesla", domain: "tesla.com" }, { name: "Uber", domain: "uber.com" },
+  { name: "UnitedHealth Group", domain: "unitedhealthgroup.com" }, { name: "Walmart", domain: "walmart.com" },
+];
+
+export function mockSearchCompanies(q: string): MockCompany[] {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return [];
+  const starts = MOCK_COMPANIES.filter((c) => c.name.toLowerCase().startsWith(needle));
+  const contains = MOCK_COMPANIES.filter((c) => !starts.includes(c) && c.name.toLowerCase().includes(needle));
+  return [...starts, ...contains].slice(0, 8);
+}
+
+export function mockExtractJob(text: string, title: string | null) {
+  return { found: true, job_title: title, company: null, description: text.slice(0, 12000) };
+}
