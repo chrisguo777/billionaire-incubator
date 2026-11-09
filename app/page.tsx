@@ -12,7 +12,7 @@ import type { ReviewResult } from "@/lib/review";
 import { FACT_FIELDS } from "@/lib/schema";
 import type { Asked, ExperienceDB, Gap, GapStatus, JDAnalysis, Requirement } from "@/lib/schema";
 import type { RankedCard, ResumeOutput, RewrittenCard } from "@/lib/pipeline";
-import { docToHTML, resumeFileName } from "@/lib/resume-doc";
+import { docToHTML, fitResumeToOnePage, resumeFileName } from "@/lib/resume-doc";
 import ScoreComparison from "./components/score-comparison";
 
 const MAX_QUESTIONS = 3; // 追问停止条件尚未最终确定，demo 先固定为 3 题
@@ -360,11 +360,24 @@ export default function Page() {
   }, [db]);
   const preview = reviewed?.resume;
   const previewFrame = useRef<HTMLIFrameElement>(null);
+  const [onePage, setOnePage] = useState(true);
+  const [loadedPreview, setLoadedPreview] = useState<{ html: string; onePage: boolean; scale: number } | null>(null);
   const previewHTML = useMemo(() => (preview?.doc ? docToHTML(preview.doc) : ""), [preview]);
+  const previewReady = loadedPreview?.html === previewHTML && loadedPreview.onePage === onePage;
+
+  async function preparePreview(frame: HTMLIFrameElement) {
+    const doc = frame.contentDocument;
+    if (!doc?.querySelector(".resume-content")) return;
+    await doc.fonts.ready;
+    if (frame !== previewFrame.current || doc !== frame.contentDocument || frame.srcdoc !== previewHTML) return;
+    const scale = onePage ? fitResumeToOnePage(doc) : 1;
+    frame.style.height = `${Math.ceil(doc.body.getBoundingClientRect().height) + 4}px`;
+    setLoadedPreview({ html: previewHTML, onePage, scale });
+  }
 
   function downloadPDF() {
     const frame = previewFrame.current?.contentWindow;
-    if (!frame || !preview) return;
+    if (!frame || !preview || !previewReady) return;
     // 打印窗口里选择「存储为 PDF」；文件名取自页面标题
     const original = document.title;
     document.title = resumeFileName(preview.doc, "pdf").replace(/\.pdf$/, "");
@@ -374,10 +387,10 @@ export default function Page() {
   }
 
   async function downloadWord() {
-    if (!preview) return;
+    if (!preview || !previewReady || !loadedPreview) return;
     await guard("生成 Word 文件…", async () => {
       const { buildDocx } = await import("@/lib/resume-docx");
-      const blob = await buildDocx(preview.doc);
+      const blob = await buildDocx(preview.doc, loadedPreview.scale);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -669,21 +682,34 @@ export default function Page() {
               <p className="note">当前简历保留 {retainedCount} 条原句，使用 {acceptedCount} 条已接受的改写或新增描述。未操作的原句会保留。</p>
               <p className="note">当前排序：{SORT_LABELS[sortMode]}</p>
               <p className="note">下面的预览和导出的 PDF 是同一份排版，排序、保留和已接受的改写都会同步。点「下载 PDF」会打开打印窗口，在目标打印机里选择「存储为 PDF」即可保存；「下载 Word」直接下载 .docx 文件，可以继续在 Word 里修改。</p>
+              <fieldset className="resume-sort" disabled={!!busy || needsOriginals}>
+                <legend>简历页数</legend>
+                <label>
+                  <input type="radio" name="resume-pagination" checked={onePage} onChange={() => { setLoadedPreview(null); setOnePage(true); }} />
+                  压缩至 1 页（推荐）
+                </label>
+                <label>
+                  <input type="radio" name="resume-pagination" checked={!onePage} onChange={() => { setLoadedPreview(null); setOnePage(false); }} />
+                  自然分页
+                </label>
+              </fieldset>
+              {onePage && <p className="note">PDF 按 Letter 纸张压缩为一页。Word 会应用相近的字号和间距，实际页数取决于字体和 Word 的排版。</p>}
+              {onePage && previewReady && loadedPreview && loadedPreview.scale * 10.5 < 8 && (
+                <p className="warn" role="status">内容较多，压缩后的字号偏小。可切回自然分页以便阅读。</p>
+              )}
               {needsOriginals ? <p className="note" role="status">请重新生成简历以显示完整原句。</p> : previewHTML && (
                 <iframe
+                  key={onePage ? "one-page" : "natural"}
                   ref={previewFrame}
                   className="resume-preview"
                   title="简历预览"
                   srcDoc={previewHTML}
-                  onLoad={(e) => {
-                    const d = e.currentTarget.contentDocument;
-                    if (d) e.currentTarget.style.height = `${d.documentElement.scrollHeight + 4}px`;
-                  }}
+                  onLoad={(e) => void preparePreview(e.currentTarget)}
                 />
               )}
               <div className="row">
-                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={downloadPDF}>下载 PDF</button>
-                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={downloadWord}>下载 Word</button>
+                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null || !previewReady} onClick={downloadPDF}>下载 PDF</button>
+                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null || !previewReady} onClick={downloadWord}>下载 Word</button>
               </div>
               <details>
                 <summary>查看 Markdown 原文</summary>

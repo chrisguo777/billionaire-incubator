@@ -69,7 +69,7 @@ export async function evaluateResume(before: string, after: string, db: Experien
     "fact_risks 只列明确矛盾或确实缺少依据的具体风险；不要把忠实改写、没有风险或未经过外部核实本身列为风险。没有风险时返回空数组。",
     "fact_risks 的quote必须来自after，source_ids只引用confirmed里的id；缺乏支持时可为空数组。区分明确矛盾和缺少依据需用户核实。",
     "missing记录未提供信息，suggestion和next_actions仅建议核实或改善表达，绝不替用户补写未经确认的数字、职责或能力。",
-    "评估仅针对当前文字内容；没有教育经历/联系方式是Demo模板局限，应指出但不要在多个维度重复扣分。不评估排版、文件解析质量或预测ATS通过率。不要强求修改稿比原稿高分。",
+    "评估仅针对当前文字内容；评估岗位相关内容时跳过简历抬头的姓名、联系方式和姓名占位符。不评估排版、文件解析质量或预测ATS通过率。不要强求修改稿比原稿高分。",
   ].join("\n"), JSON.stringify({ before, after, confirmed: facts, jd: jd.requirements }), "medium");
   return { version: EVALUATION_VERSION, mode, ...validateEvidence(report, before, after, db, jd) };
 }

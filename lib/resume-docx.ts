@@ -17,21 +17,27 @@ const PAGE_WIDTH = 12240; // Letter，单位 twip
 const MARGIN = 864; // 0.6 英寸
 const RIGHT_TAB = PAGE_WIDTH - MARGIN * 2;
 
-export async function buildDocx(doc: ResumeDoc): Promise<Blob> {
+export async function buildDocx(doc: ResumeDoc, scale = 1): Promise<Blob> {
+  const fit = (value: number) => Math.round(value * scale);
+  const fontSize = (value: number) => Math.max(2, fit(value));
   const children: Paragraph[] = [
     new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { after: 160 },
-      children: [new TextRun({ text: doc.title, bold: true, size: 32, font: FONT })],
+      spacing: { after: fit(80) },
+      children: [new TextRun({ text: doc.title, bold: true, size: fontSize(32), font: FONT })],
     }),
+    ...(doc.contactLines ?? []).map((line) => new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun({ text: line, size: fontSize(SIZE), font: FONT })],
+    })),
   ];
 
   for (const section of doc.sections) {
     children.push(
       new Paragraph({
-        spacing: { before: 200, after: 80 },
+        spacing: { before: fit(200), after: fit(80) },
         border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "111111", space: 1 } },
-        children: [new TextRun({ text: section.heading, bold: true, size: SIZE, font: FONT, characterSpacing: 20 })],
+        children: [new TextRun({ text: section.heading, bold: true, size: fontSize(SIZE), font: FONT, characterSpacing: fit(20) })],
       }),
     );
     for (const entry of section.entries) {
@@ -40,17 +46,25 @@ export async function buildDocx(doc: ResumeDoc): Promise<Blob> {
           keepNext: true,
           tabStops: [{ type: TabStopType.RIGHT, position: RIGHT_TAB }],
           children: [
-            new TextRun({ text: entry.title, bold: true, size: SIZE, font: FONT }),
-            ...(entry.location ? [new TextRun({ text: `, ${entry.location}`, size: SIZE, font: FONT })] : []),
-            ...(entry.dates ? [new TextRun({ text: `\t${entry.dates}`, size: SIZE, font: FONT })] : []),
+            new TextRun({ text: entry.title, bold: true, size: fontSize(SIZE), font: FONT }),
+            ...(entry.location ? [new TextRun({ text: `, ${entry.location}`, size: fontSize(SIZE), font: FONT })] : []),
+            ...(entry.dates ? [new TextRun({ text: `\t${entry.dates}`, size: fontSize(SIZE), font: FONT })] : []),
           ],
         }),
       );
-      if (entry.subtitle) {
+      if (entry.position || entry.subtitle) {
         children.push(
           new Paragraph({
             keepNext: entry.bullets.length > 0,
-            children: [new TextRun({ text: entry.subtitle, italics: true, size: SIZE, font: FONT })],
+            children: [
+              ...(entry.position ? [new TextRun({
+                text: entry.position, bold: true, italics: true, size: fontSize(SIZE), font: FONT,
+              })] : []),
+              ...(entry.subtitle ? [new TextRun({
+                text: entry.position ? `, ${entry.subtitle}` : entry.subtitle,
+                italics: true, size: fontSize(SIZE), font: FONT,
+              })] : []),
+            ],
           }),
         );
       }
@@ -58,14 +72,14 @@ export async function buildDocx(doc: ResumeDoc): Promise<Blob> {
         children.push(
           new Paragraph({
             numbering: { reference: "resume-bullets", level: 0 },
-            spacing: { after: i === entry.bullets.length - 1 ? 120 : 20 },
-            children: [new TextRun({ text: b, size: SIZE, font: FONT })],
+            spacing: { after: fit(i === entry.bullets.length - 1 ? 120 : 20) },
+            children: [new TextRun({ text: b, size: fontSize(SIZE), font: FONT })],
           }),
         );
       });
     }
     if (section.text) {
-      children.push(new Paragraph({ children: [new TextRun({ text: section.text, size: SIZE, font: FONT })] }));
+      children.push(new Paragraph({ children: [new TextRun({ text: section.text, size: fontSize(SIZE), font: FONT })] }));
     }
   }
 
@@ -82,7 +96,7 @@ export async function buildDocx(doc: ResumeDoc): Promise<Blob> {
               format: LevelFormat.BULLET,
               text: "•",
               alignment: AlignmentType.LEFT,
-              style: { paragraph: { indent: { left: 280, hanging: 200 } } },
+              style: { paragraph: { indent: { left: fit(280), hanging: fit(200) } } },
             },
           ],
         },
