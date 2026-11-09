@@ -69,7 +69,7 @@ process.env.LLM_MODE = 'mock';
 
   await test('English resume: headings stay English and a Chinese bullet is flagged', () => {
     const out = assembleResume(makeDb('en'), jd, [], rewritten);
-    assert.equal(out.doc.title, 'Targeted resume — Data Analyst');
+    assert.equal(out.doc.fileTitle, 'Targeted resume — Data Analyst');
     assert.deepEqual(out.doc.sections.map((s) => s.heading), ['EXPERIENCE']);
     const flagged = out.warnings.filter((w) => w.includes('不是简历目标语言'));
     assert.equal(flagged.length, 1);
@@ -78,7 +78,7 @@ process.env.LLM_MODE = 'mock';
 
   await test('Chinese resume: headings are Chinese and an English sentence is flagged', () => {
     const out = assembleResume(makeDb('zh'), jd, [], rewritten);
-    assert.equal(out.doc.title, '定向简历 — Data Analyst');
+    assert.equal(out.doc.fileTitle, '定向简历 — Data Analyst');
     assert.deepEqual(out.doc.sections.map((s) => s.heading), ['经历']);
     const flagged = out.warnings.filter((w) => w.includes('不是简历目标语言'));
     assert.equal(flagged.length, 2, 'the two English bullets are flagged; the Chinese one is not');

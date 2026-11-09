@@ -15,6 +15,7 @@ import { FACT_FIELDS } from "./schema";
 
 export function mockParseCV(): ParsedCV {
   return {
+    header: { name: "Alex Chen", contactLines: [] },
     education: [
       {
         school: "University of Michigan",
@@ -31,6 +32,7 @@ export function mockParseCV(): ParsedCV {
       {
         organization: "Department of Biostatistics, University of Michigan",
         title: "Graduate Research Assistant",
+        title_is_position: true,
         type: "research",
         start_date: "Sep 2025",
         end_date: "Present",
@@ -59,6 +61,7 @@ export function mockParseCV(): ParsedCV {
       {
         organization: "BIOSTAT 699",
         title: "Course Project: Hospital Database",
+        title_is_position: false,
         type: "course_project",
         start_date: "Fall 2025",
         end_date: null,
@@ -81,6 +84,7 @@ export function mockParseCV(): ParsedCV {
       {
         organization: "Intro to Statistics",
         title: "Teaching Assistant",
+        title_is_position: true,
         type: "teaching",
         start_date: "Jan 2026",
         end_date: "Apr 2026",
@@ -106,6 +110,7 @@ export function mockParseCV(): ParsedCV {
       {
         organization: "Skills (from CV)",
         title: null,
+        title_is_position: false,
         type: "skills_list",
         start_date: null,
         end_date: null,

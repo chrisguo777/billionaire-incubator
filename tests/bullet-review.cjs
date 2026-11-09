@@ -16,7 +16,8 @@ process.env.LLM_MODE = 'mock';
   const { extractOriginalBullets } = await import('../lib/original-bullets.ts');
   const { normalizeRewrites, checkBullet, parseCV, analyzeJD, matchExperience, detectGaps, rankCards, rewriteBullets } = await import('../lib/pipeline.ts');
   const { reviewResume } = await import('../lib/review.ts');
-  const { bulletKey } = await import('../lib/review-types.ts');
+  const { bulletKey, needsBulletReview } = await import('../lib/review-types.ts');
+  const { reviewableCards } = await import('../lib/review-display.ts');
   const { confirmedFacts } = await import('../lib/evaluation.ts');
   const { SAMPLE_CV } = await import('../lib/sample.ts');
   let passed = 0;
@@ -146,6 +147,60 @@ process.env.LLM_MODE = 'mock';
     const other = structuredClone(db); other.cards[2].original_bullets[0].text = second;
     const r = reviewResume(other, jd, gaps, normalizeRewrites(other, ['c1', 'c3'], { cards: [] }), {});
     assert.equal(r.resume.markdown.split(second).length - 1, 2);
+  });
+
+  const unchangedRows = normalizeRewrites(db, ['c1', 'c3'], { cards: [] });
+  test('unchanged originals stay in the resume but produce no review cards or empty card headings', () => {
+    const r = reviewResume(db, jd, gaps, unchangedRows, {});
+    assert.equal(reviewableCards(db, r.rewritten).length, 0);
+    assert(r.rewritten.every(c => c.bullets.every(b => b.has_suggestion === false)));
+    assert.equal(r.stats.retained, 3);
+    assert.equal(r.resume.experienceBulletCount, 3);
+    assert(r.resume.markdown.includes(compact(full)));
+    assert(r.resume.markdown.includes(second));
+  });
+  test('whitespace and wrapping alone do not require review, while case, punctuation and real wording do', () => {
+    assert(!needsBulletReview(full, '  ' + compact(full).replaceAll(' ', '  ') + '\n'));
+    assert(needsBulletReview('Used SQL.', 'Used sql.'));
+    assert(needsBulletReview('Analyzed data', 'Analyzed data.'));
+    assert(needsBulletReview('Led the project.', 'Supported the project.'));
+    assert(needsBulletReview(undefined, 'New confirmed experience.'));
+  });
+  test('identical model output is retained even when an old client accepted or excluded it', () => {
+    const same = normalizeRewrites(db, ['c1', 'c3'], { cards: [{ card_id:'c1', bullets:[proposal('b1', compact(full))] }] });
+    for (const status of ['accepted', 'excluded']) {
+      const r = reviewResume(db, jd, gaps, same, { [key]: { text: compact(full), status } });
+      assert.equal(r.stats.accepted, 0); assert.equal(r.stats.excluded, 0);
+      assert.equal(r.stats.retained, 3); assert.equal(r.resume.experienceBulletCount, 3);
+      assert.equal(reviewableCards(db, r.rewritten).length, 0);
+      assert(r.resume.markdown.includes(compact(full)));
+    }
+  });
+  test('hiding the first unchanged row preserves later original indices, dialogue keys and source cache', () => {
+    const mixed = normalizeRewrites(db, ['c1', 'c3'], { cards: [{ card_id:'c1', bullets:[
+      proposal('b1', full), proposal('b2', 'The report supported follow-up interviews; I did not run an A/B test.'),
+      proposal(null, 'Documented a dashboard handover guide.', ['dialogue1']),
+    ] }] });
+    const snapshot = JSON.stringify(mixed);
+    const visible = reviewableCards(db, mixed);
+    assert.deepEqual(visible.map(c => c.card_id), ['c1']);
+    assert.deepEqual(visible[0].rows.map(row => row.index), [1, 2]);
+    assert.equal(visible[0].rows[0].key, bulletKey('c1', 1, 'b2'));
+    assert.equal(visible[0].rows[1].key, bulletKey('c1', 2, null, ['dialogue1']));
+    assert.equal(JSON.stringify(mixed), snapshot);
+  });
+  test('editing a proposed rewrite back to the original hides that decision and counts it as retained', () => {
+    const r = review({ [key]: { text: full, status: 'accepted' } });
+    assert.equal(r.stats.accepted, 0); assert.equal(r.stats.retained, 3);
+    assert(!reviewableCards(db, r.rewritten).flatMap(c => c.rows).some(row => row.key === key));
+    assert(r.resume.markdown.includes(compact(full)));
+  });
+  test('changed accepted/excluded suggestions remain reviewable so the user can retract a choice', () => {
+    for (const status of ['accepted', 'excluded']) {
+      const r = review({ [key]: { text: revised, status } });
+      assert(reviewableCards(db, r.rewritten).flatMap(c => c.rows).some(row => row.key === key));
+      assert.equal(status === 'accepted' ? r.stats.accepted : r.stats.excluded, 1);
+    }
   });
 
   const mockDB = await parseCV(SAMPLE_CV), mockJD = await analyzeJD('mock');

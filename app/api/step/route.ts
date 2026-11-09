@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 import { EVALUATION_VERSION } from "@/lib/evaluation-schema";
 import { evaluateResume } from "@/lib/evaluation";
 import { reviewResume } from "@/lib/review";
-import { getMode } from "@/lib/llm";
+import { getMode, getProvider, isProviderConfigured } from "@/lib/llm";
 import { isLang } from "@/lib/language";
 import {
   analyzeJD,
@@ -23,9 +23,10 @@ import {
 import type { Asked, ExperienceDB, Gap, JDAnalysis } from "@/lib/schema";
 
 export const maxDuration = 120;
+export const runtime = "nodejs";
 
 export async function GET() {
-  return NextResponse.json({ mode: getMode(), evaluationVersion: EVALUATION_VERSION });
+  return NextResponse.json({ mode: getMode(), provider: getProvider(), configured: isProviderConfigured(), evaluationVersion: EVALUATION_VERSION });
 }
 
 async function analyze(db: ExperienceDB, jd: JDAnalysis, asked: Asked) {

@@ -8,12 +8,13 @@ import { countExperiences, needsExperienceDiscovery, TARGET_EXPERIENCES, type Ex
 import { SAMPLE_CV, SAMPLE_JD } from "@/lib/sample";
 import { DIMENSIONS, type EvaluationReport } from "@/lib/evaluation-schema";
 import { bulletKey, type ReviewChoices } from "@/lib/review-types";
-import { findOriginal } from "@/lib/original-bullets";
+import { reviewableCards } from "@/lib/review-display";
 import type { ReviewResult } from "@/lib/review";
 import { FACT_FIELDS } from "@/lib/schema";
 import type { Asked, ExperienceDB, Gap, GapStatus, JDAnalysis, Requirement } from "@/lib/schema";
 import type { RankedCard, ResumeOutput, RewrittenCard } from "@/lib/pipeline";
-import { docToHTML, resumeFileName } from "@/lib/resume-doc";
+import { docToHTML, fitResumeToOnePage, resumeFileName } from "@/lib/resume-doc";
+import ScoreComparison from "./components/score-comparison";
 
 const MAX_QUESTIONS = 3; // 追问停止条件尚未最终确定，demo 先固定为 3 题
 
@@ -79,6 +80,8 @@ function Who({ kinds }: { kinds: ("ai" | "rule" | "user")[] }) {
 
 export default function Page() {
   const [mode, setMode] = useState<"live" | "mock" | null>(null);
+  const [provider, setProvider] = useState<"anthropic" | "mock" | null>(null);
+  const [providerConfigured, setProviderConfigured] = useState(true);
   const [cv, setCv] = useState(SAMPLE_CV);
   const [jdText, setJdText] = useState(SAMPLE_JD);
   const [db, setDb] = useState<ExperienceDB | null>(null);
@@ -105,7 +108,7 @@ export default function Page() {
   const [uploadInfo, setUploadInfo] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/step").then((r) => r.json()).then((d) => setMode(d.mode)).catch(() => {});
+    fetch("/api/step").then((r) => r.json()).then((d) => { setMode(d.mode); setProvider(d.provider); setProviderConfigured(d.configured !== false); }).catch(() => {});
   }, []);
 
   const newIds = useMemo(() => new Set(turns.flatMap((t) => t.added_ids)), [turns]);
@@ -343,6 +346,8 @@ export default function Page() {
   const ranked = reviewed?.ranked ?? result?.ranked ?? [];
   const orderedRanked = db ? orderResumeCards(ranked, db, sortMode, ranked) : [];
   const orderedRewritten = reviewed && db ? orderResumeCards(reviewed.rewritten, db, sortMode, ranked) : [];
+  const reviewCards = db ? reviewableCards(db, orderedRewritten) : [];
+  const reviewableBulletCount = reviewCards.reduce((count, card) => count + card.rows.length, 0);
 
   const sources = useMemo(() => {
     const index = new Map<string, { text: string; field: string; source: string; status: string; card: string }>();
@@ -358,11 +363,24 @@ export default function Page() {
   }, [db]);
   const preview = reviewed?.resume;
   const previewFrame = useRef<HTMLIFrameElement>(null);
+  const [onePage, setOnePage] = useState(true);
+  const [loadedPreview, setLoadedPreview] = useState<{ html: string; onePage: boolean; scale: number } | null>(null);
   const previewHTML = useMemo(() => (preview?.doc ? docToHTML(preview.doc) : ""), [preview]);
+  const previewReady = loadedPreview?.html === previewHTML && loadedPreview.onePage === onePage;
+
+  async function preparePreview(frame: HTMLIFrameElement) {
+    const doc = frame.contentDocument;
+    if (!doc?.querySelector(".resume-content")) return;
+    await doc.fonts.ready;
+    if (frame !== previewFrame.current || doc !== frame.contentDocument || frame.srcdoc !== previewHTML) return;
+    const scale = onePage ? fitResumeToOnePage(doc) : 1;
+    frame.style.height = `${Math.ceil(doc.body.getBoundingClientRect().height) + 4}px`;
+    setLoadedPreview({ html: previewHTML, onePage, scale });
+  }
 
   function downloadPDF() {
     const frame = previewFrame.current?.contentWindow;
-    if (!frame || !preview) return;
+    if (!frame || !preview || !previewReady) return;
     // 打印窗口里选择「存储为 PDF」；文件名取自页面标题
     const original = document.title;
     document.title = resumeFileName(preview.doc, "pdf").replace(/\.pdf$/, "");
@@ -372,10 +390,10 @@ export default function Page() {
   }
 
   async function downloadWord() {
-    if (!preview) return;
+    if (!preview || !previewReady || !loadedPreview) return;
     await guard("生成 Word 文件…", async () => {
       const { buildDocx } = await import("@/lib/resume-docx");
-      const blob = await buildDocx(preview.doc);
+      const blob = await buildDocx(preview.doc, loadedPreview.scale);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -410,7 +428,7 @@ export default function Page() {
   return (
     <main>
       <h1>
-        Resume Agent · Demo v0 {mode && <span className={`mode ${mode}`}>{mode === "live" ? "LIVE · 真实模型" : "MOCK · 无 API Key，使用内置示例逻辑"}</span>}
+        Resume Agent · Demo v0 {mode && <span className={`mode ${!providerConfigured ? "mock" : mode}`}>{mode === "live" ? providerConfigured ? "LIVE · Anthropic API" : "Anthropic API · 待配置密钥" : "MOCK · 使用内置示例逻辑"}</span>}
       </h1>
       <p className="sub">
         CV + JD → 解析 → JD 匹配 → 缺口检测 → 针对性追问 → 选材排序 → 改写 → 定制简历。只有「已确认」的事实才会进入简历。
@@ -451,6 +469,7 @@ export default function Page() {
         {mode === "mock" && (
           <p className="note">Mock 模式只认识内置的示例 CV/JD；换成别的文本需要配置 ANTHROPIC_API_KEY（见 README）。</p>
         )}
+        {provider === "anthropic" && !providerConfigured && <p className="note" role="status">已切换为 Anthropic API。请在项目根目录的 .env.local 中填写 ANTHROPIC_API_KEY，再重启开发服务并刷新页面。</p>}
         <div className="row">
           <button onClick={runAnalysis} disabled={!!busy}>解析并分析</button>
           {busy && <span className="note">{busy}</span>}
@@ -633,14 +652,13 @@ export default function Page() {
               </table>
 
               <h2 style={{ marginTop: 16 }}>改写对照与逐条审阅</h2>
-              {needsOriginals ? <p className="note" role="status">当前结果来自旧版，请点「生成简历」补齐完整原句，已有追问记录会保留。</p> : <p className="note" role="status">共 {totalBullets} 条，已接受 {acceptedCount} 条，保留原句 {retainedCount} 条，已排除 {reviewed?.stats?.excluded ?? 0} 条。未选择时保留原句，接受后才替换；排除会删除整条。</p>}
-              <p className="note">左侧保留原简历的整条 bullet（包含续行和分句），每条原句只审阅一次。追问补充的新增建议没有原句，需接受后才加入。规则校验只检查来源、确认状态和数字，请同时核实职责与个人贡献。</p>
-              {(!needsOriginals ? orderedRewritten : []).map((rc) => (
+              {needsOriginals ? <p className="note" role="status">当前结果来自旧版，请点「生成简历」补齐完整原句，已有追问记录会保留。</p> : <p className="note" role="status">共 {totalBullets} 条，其中改动或新增建议 {reviewableBulletCount} 条；已接受 {acceptedCount} 条，保留原句 {retainedCount} 条，已排除 {reviewed?.stats?.excluded ?? 0} 条。未选择时保留原句，接受后才替换；排除会删除整条。</p>}
+              <p className="note">这里只列出有改动或新增的建议；未改动的 bullet 自动保留，不需要接受或排除。左侧显示原简历的完整 bullet（包含续行和分句）。追问补充的新增建议需接受后才加入。规则校验只检查来源、确认状态和数字，请同时核实职责与个人贡献。</p>
+              {!needsOriginals && reviewableBulletCount === 0 && <p className="note" role="status">当前没有需要审阅的改动。未改动的原句会保留在下方简历中。</p>}
+              {(!needsOriginals ? reviewCards : []).map((rc) => (
                 <div className="cardbox" key={rc.card_id}>
                   <h3>{cardName(rc.card_id)}</h3>
-                  {rc.bullets.map((b, i) => {
-                    const key = bulletKey(rc.card_id, i, b.original_bullet_id, b.source_ids);
-                    const sourceBullet = db ? findOriginal(db, rc.card_id, b.original_bullet_id) : undefined;
+                  {rc.rows.map(({ bullet: b, index: i, key, sourceBullet }) => {
                     const original = result.rewritten.find((c) => c.card_id === rc.card_id)?.bullets.find((candidate, index) => bulletKey(rc.card_id, index, candidate.original_bullet_id, candidate.source_ids) === key)
                       ?? { ...b, text: sourceBullet?.text ?? b.text, has_suggestion: false };
                     const status = choices[key]?.status ?? "pending";
@@ -693,21 +711,34 @@ export default function Page() {
               <p className="note">当前简历保留 {retainedCount} 条原句，使用 {acceptedCount} 条已接受的改写或新增描述。未操作的原句会保留。</p>
               <p className="note">当前排序：{SORT_LABELS[sortMode]}</p>
               <p className="note">下面的预览和导出的 PDF 是同一份排版，排序、保留和已接受的改写都会同步。点「下载 PDF」会打开打印窗口，在目标打印机里选择「存储为 PDF」即可保存；「下载 Word」直接下载 .docx 文件，可以继续在 Word 里修改。</p>
+              <fieldset className="resume-sort" disabled={!!busy || needsOriginals}>
+                <legend>简历页数</legend>
+                <label>
+                  <input type="radio" name="resume-pagination" checked={onePage} onChange={() => { setLoadedPreview(null); setOnePage(true); }} />
+                  压缩至 1 页（推荐）
+                </label>
+                <label>
+                  <input type="radio" name="resume-pagination" checked={!onePage} onChange={() => { setLoadedPreview(null); setOnePage(false); }} />
+                  自然分页
+                </label>
+              </fieldset>
+              {onePage && <p className="note">PDF 按 Letter 纸张压缩为一页。Word 会应用相近的字号和间距，实际页数取决于字体和 Word 的排版。</p>}
+              {onePage && previewReady && loadedPreview && loadedPreview.scale * 10.5 < 8 && (
+                <p className="warn" role="status">内容较多，压缩后的字号偏小。可切回自然分页以便阅读。</p>
+              )}
               {needsOriginals ? <p className="note" role="status">请重新生成简历以显示完整原句。</p> : previewHTML && (
                 <iframe
+                  key={onePage ? "one-page" : "natural"}
                   ref={previewFrame}
                   className="resume-preview"
                   title="简历预览"
                   srcDoc={previewHTML}
-                  onLoad={(e) => {
-                    const d = e.currentTarget.contentDocument;
-                    if (d) e.currentTarget.style.height = `${d.documentElement.scrollHeight + 4}px`;
-                  }}
+                  onLoad={(e) => void preparePreview(e.currentTarget)}
                 />
               )}
               <div className="row">
-                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={downloadPDF}>下载 PDF</button>
-                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={downloadWord}>下载 Word</button>
+                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null || !previewReady} onClick={downloadPDF}>下载 PDF</button>
+                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null || !previewReady} onClick={downloadWord}>下载 Word</button>
               </div>
               <details>
                 <summary>查看 Markdown 原文</summary>
@@ -730,10 +761,11 @@ export default function Page() {
                 {busy === "正在评估简历质量…" && <p role="status">正在评估简历质量…</p>}
                 {evaluation && !currentEvaluation && <p className="note">简历或审阅内容已变化，请重新评估。</p>}
                 {currentEvaluation && <>
+                  <ScoreComparison report={currentEvaluation} />
                   <p>{currentEvaluation.summary}</p>
                   {currentEvaluation.warnings.length > 0 && <ul className="warn">{currentEvaluation.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>}
                   {currentEvaluation.dimensions.map((dimension) => <div className="cardbox" key={dimension.id}>
-                    <h3>{DIMENSIONS[dimension.id]}</h3>
+                    <h3 id={`evaluation-evidence-${dimension.id}`} className="evaluation-evidence-title">{DIMENSIONS[dimension.id]}</h3>
                     <div className="grid2">{(["before", "after"] as const).map((version) => <div className="review-panel" key={version}>
                       <h4>{version === "before" ? "原简历" : "当前稿"} · {dimension[version].score === null ? "暂不评分" : `${dimension[version].score} / 3`}</h4>
                       <p>{dimension[version].reason}</p>
@@ -742,7 +774,7 @@ export default function Page() {
                     {dimension.missing.length > 0 && <><b>缺失信息</b><ul>{dimension.missing.map((m, i) => <li key={i}>{m}</li>)}</ul></>}
                     <p><b>建议：</b>{dimension.suggestion}</p>
                   </div>)}
-                  <h3>需要核实的事实风险</h3>
+                  <h3 id="evaluation-fact-risks" className="evaluation-evidence-title">需要核实的事实风险</h3>
                   {currentEvaluation.fact_risks.length ? currentEvaluation.fact_risks.map((risk, i) => <div className="cardbox" key={i}><blockquote>{risk.quote}</blockquote><p>{risk.reason}</p><span className="note">来源事实：{risk.source_ids.join("、") || "未找到支持事实，需用户核实"}</span></div>) : <p className="note">本次未报告具体风险；这不等于内容已获得外部核实。</p>}
                   {currentEvaluation.next_actions.length > 0 && <><h3>优先改进建议</h3><ol>{currentEvaluation.next_actions.map((action, i) => <li key={i}>{action}</li>)}</ol></>}
                 </>}
