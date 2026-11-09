@@ -4,6 +4,7 @@ import type { CardEvidenceStatus } from "./resume-selection";
 import { extractOriginalBullets, normalizedBullet, renderOriginalBullets, uniqueOriginals } from "./original-bullets";
 import { needsBulletReview } from "./review-types";
 import { SAMPLE_CV } from "./sample";
+import { detectLanguage, isForeign, LANG_PROMPT_NAME, resumeTitle, SECTION_HEADINGS, type Lang } from "./language";
 import { callStructured, getMode } from "./llm";
 import {
   mockAnalyzeJD,
@@ -139,6 +140,7 @@ export async function parseCV(cvText: string): Promise<ExperienceDB> {
     affiliations: [],
     cards: [],
     education: [],
+    resume_language: detectLanguage(live() ? cvText : SAMPLE_CV),
   };
   let n = 0;
   const id = (p: string) => `${p}${++n}`;
@@ -313,8 +315,27 @@ export interface QA {
   answer: string;
 }
 
-export async function askQuestion(db: ExperienceDB, gap: Gap, req: Requirement, history: QA[] = []): Promise<string> {
-  if (!live()) return mockQuestion(gap, req);
+// 访谈中补充、不属于原简历任何一段的经历归到这个内部分组。
+const INTERVIEW_AFFILIATION = "Added during interview";
+
+// 示范问题只给模型看长度和结构，按沟通语言各一版。
+const QUESTION_STYLE: Record<Lang, { length: string; filler: string; example: string }> = {
+  zh: {
+    length: "at most 3 short sentences, about 80 Chinese characters",
+    filler: "'我很好奇', '比如', '跟我说说', '完全'",
+    example: "你在瑞德赛恩的回归分析影响了哪个决定？有没有哪条保护策略因你的结论被提出或采纳？数据量、关键发现、报告使用方等如有可量化信息也请说明。",
+  },
+  en: {
+    length: "at most 3 short sentences, about 50 words",
+    filler: "'I'm curious', 'for example', 'tell me about', 'totally'",
+    example: "Which decision did your regression analysis at Reed Sun influence? Was any conservation strategy proposed or adopted because of your findings? If available, share quantifiable details such as data volume, key findings, or who used the report.",
+  },
+};
+
+/** chatLang 是用户选的沟通语言，只影响问题本身；简历语言不受影响。 */
+export async function askQuestion(db: ExperienceDB, gap: Gap, req: Requirement, history: QA[] = [], chatLang: Lang = "zh"): Promise<string> {
+  if (!live()) return mockQuestion(gap, req, chatLang);
+  const style = QUESTION_STYLE[chatLang];
   const earlier = history.length
     ? history.map((h, i) => `Q${i + 1}: ${h.question}\nA${i + 1}: ${h.answer}`).join("\n\n")
     : "(none)";
@@ -323,10 +344,10 @@ export async function askQuestion(db: ExperienceDB, gap: Gap, req: Requirement, 
     QuestionOutput,
     [
       "You interview a job seeker to uncover real experience for their resume.",
-      "Ask exactly ONE question in Chinese, specific to the requirement and to what is already known. Keep it concise: at most 3 short sentences, about 80 Chinese characters.",
-      "Structure: (1) name the specific experience and ask the core question; (2) optionally list the quantifiable details that would help, as short nouns. Do not add reassurance phrases such as '没有也没关系'.",
-      "No filler or small talk (e.g. '我很好奇', '比如', '跟我说说', '完全'). Do not restate background the user already knows.",
-      "Example of the target style (copy the length and structure only, never its content): 你在瑞德赛恩的回归分析影响了哪个决定？有没有哪条保护策略因你的结论被提出或采纳？数据量、关键发现、报告使用方等如有可量化信息也请说明。",
+      `Ask exactly ONE question in ${LANG_PROMPT_NAME[chatLang]}, specific to the requirement and to what is already known, even if the experience database or earlier answers are in another language. Keep it concise: ${style.length}.`,
+      "Structure: (1) name the specific experience and ask the core question; (2) optionally list the quantifiable details that would help, as short nouns. Do not add reassurance phrases such as '没有也没关系' or 'it's fine if not'.",
+      `No filler or small talk (e.g. ${style.filler}). Do not restate background the user already knows.`,
+      `Example of the target style (copy the length and structure only, never its content): ${style.example}`,
       "If the status is 'weak', ask for the missing specifics (what they personally did, tools/methods, a measurable result). If 'unknown', first ask whether they have done anything like it.",
       "Never suggest numbers or claims for the user to adopt. Do not mention internal terms like status or gap.",
       "The user has already answered the earlier questions listed below. Never ask again about anything they already answered (including tools or topics they said they have not used); if the requirement overlaps with an earlier answer, narrow the question to what is still unknown, and do not mention tools or topics they already ruled out.",
@@ -359,7 +380,7 @@ export async function applyAnswer(
           "Record ONLY what the user actually said. Do not add, round, or infer numbers. If a result has no stated number, set value to null.",
           "If the user says they have no such experience, set has_experience=false and leave the rest empty.",
           "Attach to an existing card via target_card_id when the answer is about it; otherwise set new_card_name and leave target_card_id null.",
-          "Write facts in the user's language, short and factual.",
+          `Write every fact, outcome note and new_card_name in ${LANG_PROMPT_NAME[resumeLang(db)]} (the language of the user's resume), even if the user answered in another language. Translate faithfully: no added detail, no stronger wording, numbers kept exactly as stated (write them as digits). Keep facts short and factual.`,
         ].join("\n"),
         `QUESTION: ${question}\nREQUIREMENT: ${req.text}\nRELATED CARD IDS: ${gap.related_card_ids.join(", ") || "(none)"}\n\nEXPERIENCE DATABASE\n${renderDB(db)}\n\nUSER ANSWER\n${answer}`,
       )
@@ -377,9 +398,9 @@ export async function applyAnswer(
   const id = (p: string) => `${p}${++n}`;
   let card = next.cards.find((c) => c.id === extraction.target_card_id);
   if (!card) {
-    let aff = next.affiliations.find((a) => a.organization === "Added during interview");
+    let aff = next.affiliations.find((a) => a.organization === INTERVIEW_AFFILIATION);
     if (!aff) {
-      aff = { id: id("a"), organization: "Added during interview", title: null, type: "other", start_date: null, end_date: null };
+      aff = { id: id("a"), organization: INTERVIEW_AFFILIATION, title: null, type: "other", start_date: null, end_date: null };
       next.affiliations.push(aff);
     }
     card = {
@@ -570,7 +591,8 @@ export async function rewriteBullets(
         [
           "You write resume bullets for a specific job, using ONLY the confirmed facts provided.",
           "Return exactly ONE suggested rewrite for EACH numbered ORIGINAL BULLET, setting original_bullet_id to its ID. Preserve the full meaning of every clause, including qualifications, limitations and outcomes. Never split, merge, repeat or truncate source bullets. There is no 2-4 bullet limit.",
-          "Use the original language. Prefer a clear action + what + method/tool + result only when the source supports it. If no improvement is needed, keep the original text.",
+          `Write every bullet in ${LANG_PROMPT_NAME[resumeLang(db)]}, the language of the user's resume. Original bullets are already in this language; keep it. Some facts were recorded from an interview in another language: translate them faithfully, without adding detail or strengthening the wording.`,
+          "Prefer a clear action + what + method/tool + result only when the source supports it. If no improvement is needed, keep the original text.",
           "Hard rules: never add facts, tools, numbers, scope or ownership that are not in the cited facts. Do not turn team actions into personal actions. Every bullet must list source_ids (the fact/outcome ids it relies on).",
           "You may cite the original bullet ID itself. A new bullet with original_bullet_id=null is allowed ONLY for new confirmed dialogue facts that do not repeat an original bullet. Never create separate extra bullets from CV fact fragments.",
           "Prefer wording that reflects the job's requirements only where it is truthful for the candidate.",
@@ -584,6 +606,23 @@ export async function rewriteBullets(
 }
 
 // ---------- 12: Assemble the targeted resume ----------
+
+
+export function resumeLang(db: ExperienceDB): Lang {
+  return db.resume_language ?? "en";
+}
+
+/** 代码兜底：简历里不是目标语言的内容逐条列出来。中文简历的技能栏常是英文工具名，不检查。 */
+export function languageWarnings(doc: ResumeDoc, lang: Lang): string[] {
+  const name = lang === "zh" ? "中文" : "英文";
+  const texts = doc.sections.flatMap((s) => [
+    ...s.entries.flatMap((e) => (lang === "en" ? [e.title, e.location ?? "", e.subtitle, ...e.bullets] : e.bullets)),
+    ...(lang === "en" && s.text ? [s.text] : []),
+  ]);
+  return [...new Set(texts.filter((t) => t && isForeign(t, lang)))].map(
+    (t) => `这段内容不是简历目标语言（${name}），请编辑或接受改写后再导出：「${t}」`,
+  );
+}
 
 export interface ResumeOutput {
   markdown: string;
@@ -614,7 +653,9 @@ export function assembleResume(
 ): ResumeOutput {
   const sections: ResumeSection[] = [];
   const education = educationEntries(db.education ?? []);
-  if (education.length) sections.push({ heading: "EDUCATION", entries: education, text: null });
+  const lang = resumeLang(db);
+  const headings = SECTION_HEADINGS[lang];
+  if (education.length) sections.push({ heading: headings.education, entries: education, text: null });
 
   const experience: ResumeEntry[] = [];
   let experienceBulletCount = 0;
@@ -637,29 +678,30 @@ export function assembleResume(
       title: card.name,
       position,
       location: null,
-      subtitle: [position ? undefined : aff?.title, aff?.organization].filter(Boolean).join(", "),
+      // 「Added during interview」只是内部分组名，不写进简历
+      subtitle: [position ? undefined : aff?.title, aff?.organization === INTERVIEW_AFFILIATION ? null : aff?.organization].filter(Boolean).join(", "),
       dates: [aff?.start_date, aff?.end_date].filter(Boolean).join(" – "),
       bullets: okBullets.map((b) => b.text.replace(/\s*\n\s*/g, " ")),
     });
     experienceBulletCount += okBullets.length;
   }
-  sections.push({ heading: "EXPERIENCE", entries: experience, text: null });
+  sections.push({ heading: headings.experience, entries: experience, text: null });
 
   const skillsCard = db.cards.find((c) => db.affiliations.find((a) => a.id === c.affiliation_id)?.type === "skills_list");
   const keywords = jd.requirements.flatMap((r) => r.keywords);
   const skills = (skillsCard?.skills ?? [])
     .filter((s) => s.status === "user_confirmed")
     .sort((a, b) => Number(keywords.some((k) => b.text.toLowerCase().includes(k))) - Number(keywords.some((k) => a.text.toLowerCase().includes(k))));
-  if (skills.length) sections.push({ heading: "SKILLS", entries: [], text: skills.map((s) => s.text).join(", ") });
+  if (skills.length) sections.push({ heading: headings.skills, entries: [], text: skills.map((s) => s.text).join(", ") });
 
   const doc: ResumeDoc = {
     title: db.header?.name || "Your Name",
     contactLines: db.header?.contactLines ?? [],
-    fileTitle: `Targeted resume — ${jd.role_title}`,
+    fileTitle: resumeTitle(lang, jd.role_title),
     sections,
   };
 
-  const warnings: string[] = [];
+  const warnings: string[] = languageWarnings(doc, lang);
   for (const rc of rewritten) for (const b of rc.bullets) if (!b.ok) warnings.push(`已拦截一条 bullet：「${b.text}」— ${b.issues.join("；")}`);
   for (const c of db.cards) for (const o of c.outcomes) if (o.status !== "user_confirmed") warnings.push(`「${c.name}」里的结果「${o.note}」尚未确认，没有写入简历`);
   const coverage: Record<string, number> = { covered: 0, weak: 0, unknown: 0, true_gap: 0 };

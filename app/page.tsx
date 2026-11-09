@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LANG_LABEL, LANGS, type Lang } from "@/lib/language";
 import { SORT_LABELS, orderResumeCards, type ResumeSortMode } from "@/lib/resume-order";
 import { CARD_EVIDENCE_LABELS } from "@/lib/resume-selection";
 import { countExperiences, needsExperienceDiscovery, TARGET_EXPERIENCES, type ExperienceDiscoveryState } from "@/lib/experience-target";
@@ -91,6 +92,7 @@ export default function Page() {
   const [pending, setPending] = useState<Pending | null>(null);
   const [interviewDone, setInterviewDone] = useState(false);
   const [answer, setAnswer] = useState("");
+  const [chatLanguage, setChatLanguage] = useState<Lang>("zh");
   const [sortMode, setSortMode] = useState<ResumeSortMode>("relevance");
   const [selectedCardIds, setSelectedCardIds] = useState<string[] | null>(null);
   const [discovery, setDiscovery] = useState<ExperienceDiscoveryState>({ exhausted: false });
@@ -180,6 +182,7 @@ export default function Page() {
       asked: currentAsked,
       history,
       regularQuestionCount: count,
+      chatLanguage,
       discovery: currentDiscovery,
       selectedCardIds: currentSelection ?? undefined,
     });
@@ -450,6 +453,15 @@ export default function Page() {
           </label>
           <span className="note">{uploadInfo ?? "支持 PDF、Word（.docx）和 TXT，每个文件不超过 10MB。扫描件暂不支持，也可以直接粘贴文字。"}</span>
         </div>
+        <div className="row" style={{ marginTop: 0, marginBottom: 10 }}>
+          <label>
+            沟通语言{" "}
+            <select value={chatLanguage} onChange={(e) => setChatLanguage(e.target.value as Lang)} disabled={!!busy}>
+              {LANGS.map((l) => <option key={l} value={l}>{LANG_LABEL[l]}</option>)}
+            </select>
+          </label>
+          <span className="note">追问用这个语言提出，回答用中文或英文都可以。生成的简历始终和上传的简历语言一致，不受这里影响。</span>
+        </div>
         <div className="grid2">
           <textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} aria-label="CV" />
           <textarea value={jdText} onChange={(e) => setJdText(e.target.value)} aria-label="JD" />
@@ -469,6 +481,23 @@ export default function Page() {
         <section className="card">
           <h2>2. 简历解析 → 经历库 Experience DB <Who kinds={["ai", "rule"]} /></h2>
           <p className="note">AI 把简历拆成「经历 → 卡片 → 格子」，只能照搬原文、不许添加；代码给每条事实打上状态和出处。CV 里的内容视为「已确认」（你自己写的）；对话中得到的数字先标「待确认」，需要你点确认才算数。</p>
+          <div className="row" style={{ marginTop: 0 }}>
+            <label>
+              简历目标语言{" "}
+              <select
+                value={db.resume_language ?? "en"}
+                disabled={!!busy || !!result}
+                onChange={(e) => setDb({ ...db, resume_language: e.target.value as Lang })}
+              >
+                {LANGS.map((l) => <option key={l} value={l}>{LANG_LABEL[l]}</option>)}
+              </select>
+            </label>
+            <span className="note">
+              {result
+                ? "简历已生成，目标语言不能再改；需要换语言请重新点「解析并分析」。"
+                : "根据上传的简历自动识别。回答追问时记录的事实、改写的 bullet 和最终简历都统一用这个语言；识别不对可以在这里改。"}
+            </span>
+          </div>
           {(db.education ?? []).map((e) => (
             <div className="cardbox" key={e.id}>
               <h3>{e.school} <span className="chip">{e.id}</span></h3>
@@ -560,7 +589,7 @@ export default function Page() {
           {pending && (
             <div className="qa">
               <div className="q">Q{turns.length + 1}（{pending.kind === "experience" ? "补充经历" : pending.requirement.text}）：{pending.question}</div>
-              <textarea className="short" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="直接回答；没做过就写“没有”" />
+              <textarea className="short" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={chatLanguage === "en" ? "Answer directly; write \"no\" if you have not done it" : "直接回答；没做过就写“没有”"} />
               <div className="row">
                 <button onClick={() => submitAnswer()} disabled={!!busy || !answer.trim()}>提交回答</button>
                 {pending.kind === "experience"

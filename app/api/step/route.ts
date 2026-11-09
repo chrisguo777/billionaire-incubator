@@ -7,6 +7,7 @@ import { EVALUATION_VERSION } from "@/lib/evaluation-schema";
 import { evaluateResume } from "@/lib/evaluation";
 import { reviewResume } from "@/lib/review";
 import { getMode, getProvider, isProviderConfigured } from "@/lib/llm";
+import { isLang } from "@/lib/language";
 import {
   analyzeJD,
   applyAnswer,
@@ -59,7 +60,7 @@ export async function POST(req: Request) {
         const gap = pickGap(gaps, jd, body.asked ?? {});
         if (!gap) return NextResponse.json({ mode, done: true });
         const requirement = jd.requirements.find((r) => r.id === gap.requirement_id)!;
-        const question = await askQuestion(body.db, gap, requirement, body.history ?? []);
+        const question = await askQuestion(body.db, gap, requirement, body.history ?? [], isLang(body.chatLanguage) ? body.chatLanguage : "zh");
         return NextResponse.json({ mode, kind: "gap", gap, requirement, question });
       }
       case "answer": {
