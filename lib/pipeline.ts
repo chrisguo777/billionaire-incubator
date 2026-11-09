@@ -2,6 +2,7 @@ import { orderResumeCards, type ResumeSortMode } from "./resume-order";
 import { docToMarkdown, type ResumeDoc, type ResumeEntry, type ResumeSection } from "./resume-doc";
 import type { CardEvidenceStatus } from "./resume-selection";
 import { extractOriginalBullets, normalizedBullet, renderOriginalBullets, uniqueOriginals } from "./original-bullets";
+import { needsBulletReview } from "./review-types";
 import { SAMPLE_CV } from "./sample";
 import { callStructured, getMode } from "./llm";
 import {
@@ -521,7 +522,7 @@ export function normalizeRewrites(db: ExperienceDB, cardIds: string[], output: {
       const source_ids = [...new Set([original.id, ...(proposal?.source_ids ?? [])])];
       const text = proposal?.text ?? original.text;
       return { text, source_ids, original_bullet_id: original.id,
-        has_suggestion: proposal ? ("has_suggestion" in proposal ? proposal.has_suggestion !== false : true) : false,
+        has_suggestion: needsBulletReview(original.text, text),
         ...checkBullet(db, text, source_ids) };
     });
     const seenText = new Set(bullets.map((b) => normalizedBullet(b.text)));

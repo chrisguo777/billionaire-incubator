@@ -31,17 +31,17 @@ npm run dev
 
 浏览器打开 http://localhost:3000 ，点「解析并分析」。
 
-### 4. （可选）接入真实模型
+### 4. 接入 Anthropic API
 
-默认没有 key 时是 **MOCK 模式**：只认识页面里预填的示例，用来演示流程。想用你自己的 CV 和 JD，需要 Anthropic API key：
+1. 把 `.env.example` 复制为项目根目录的 `.env.local`。
+2. 设置 `LLM_PROVIDER=anthropic`、`LLM_MODE=live`，在 `ANTHROPIC_API_KEY=` 后填写自己的密钥。可选 `ANTHROPIC_MODEL` 覆盖现有默认模型。
+3. 重启 `npm run dev -- --hostname 127.0.0.1`，刷新页面。未填写密钥时，页面显示「Anthropic API · 待配置密钥」；填写后显示「LIVE · Anthropic API」。
 
-1. 把 `.env.example` 复制一份，命名为 `.env.local`（放在项目根目录）。
-2. 在 `.env.local` 里写 `ANTHROPIC_API_KEY=你的key`（不加引号）。
-3. **停掉**正在运行的 `npm run dev`（Ctrl+C），再重新运行。页面标题旁显示 **LIVE** 就生效了。
+显式选择 Anthropic 但缺少密钥时会提示配置，不会静默返回 mock 数据。`LLM_MODE=mock` 可单独启用内置示例；未指定提供方且没有密钥时仍使用 mock。
 
 注意：
-- **`.env.local` 不会被提交到 git，不要把 key 贴到聊天、截图、代码或 GitHub 上。**
-- 真实模型每跑一遍大约十几次调用，按量计费。
+- `.env.local` 已被 git 忽略；密钥只填写在本机配置中。
+- 真实模型按 API 账户计费；本地代码规则、审阅和图表展示不调用模型。
 - 页面状态只保存在浏览器里，刷新页面会丢失。
 
 ## 开发规则：在自己的 branch 上做
@@ -69,7 +69,7 @@ git push -u origin 你的名字/做什么
 ## 两种模式
 
 - **MOCK**：内置示例逻辑，**不读你粘贴的内容**，永远返回同一份示例数据。
-- **LIVE**：调用 Anthropic API。可选 `ANTHROPIC_MODEL` 覆盖默认模型（默认 `claude-opus-5-5`）；`LLM_MODE=mock` 强制 mock。
+- **LIVE / Anthropic**：`LLM_PROVIDER=anthropic`，使用 Anthropic API key。可选 `ANTHROPIC_MODEL` 覆盖默认模型；`LLM_MODE=mock` 可强制使用内置示例。
 
 ## 代码结构
 
@@ -79,7 +79,7 @@ git push -u origin 你的名字/做什么
 | `lib/pipeline.ts` | 各步骤逻辑：AI 步骤（解析、JD 分析、匹配、提问、抽取、改写）和代码规则步骤（缺口检测、选问题、排序、事实校验） |
 | `lib/resume-doc.ts` | 简历的结构化表示；Markdown 和网页预览 / PDF 用的 HTML 都从这里生成 |
 | `lib/resume-docx.ts` | 把简历生成 Word（.docx），在浏览器里运行 |
-| `lib/llm.ts` | 结构化输出调用（Anthropic SDK + Zod），live/mock 切换 |
+| `lib/llm.ts` | Anthropic API 调用、结构化输出与 live/mock 模式选择 |
 | `lib/mock.ts` | 无 Key 时的内置示例逻辑 |
 | `lib/experience-target.ts` / `lib/experience-discovery.ts` | 三段经历目标、补充追问与回答抽取；确认没有其他经历后允许按现有数量继续 |
 | `app/api/step/route.ts` | 无状态 API，状态由前端持有 |
@@ -93,10 +93,21 @@ git push -u origin 你的名字/做什么
 - 缺口状态由代码规则判断（Covered / Weak / Unknown / True Gap），不让 AI 拍板；用户回答"没有"优先于 AI 的匹配结果。
 - 改写后的每条 bullet 必须标注来源事实，且其中的数字必须出现在所引用的已确认事实里，否则被拦截。
 - 每条审阅项对应原简历的完整 bullet，保留分句和换行续写；原句单独保存，不从拆分后的事实片段拼回。相同经历中的重复原句和同一来源的重复建议只出现一次。
+- 审阅区只显示文本实际变化或追问新增的建议；与原句相同、仅换行或多余空格不同的条目自动保留，隐藏其审阅卡片和操作按钮，也不计入「已接受」。大小写、标点和措辞变化仍可审阅。筛选不删除缓存中的原句，不改变其他条目的稳定 id。
 - 未操作、撤回选择、或仅保存编辑时保留原句；只有「接受这条」且校验通过才替换。「排除这条」删除整条。追问补充的新增建议需接受后才加入；被拦截的改写回退原句。
 - 不同原句的改写或编辑发生重复时，保留对应原句并提示重新编辑，不会因去重而丢掉原始内容。复制和质量评估使用当前预览中的原句与已接受改写。
 
-不调用模型的回归检查：`node tests/bullet-review.cjs`、`node tests/resume-order.cjs`、`node tests/evaluation/validation.cjs`（Node 24+）。旧页面结果需重新点一次「生成简历」补齐完整原句，保留追问记录；刷新页面会丢失当前会话。
+不调用模型的回归检查：`node tests/api-provider.cjs`、`node tests/bullet-review.cjs`、`node tests/resume-order.cjs`、`node tests/evaluation/validation.cjs`（Node 24+）。旧页面结果需重新点一次「生成简历」补齐完整原句，保留追问记录；刷新页面会丢失当前会话。
+
+## 评分可视化与总分
+
+质量评估结果顶部用两个圆环并排显示原始／修改后加权总分（100 分制），下方六项指标分别用双层圆环展示（内环原始、外环修改后，每项满分 3 分），同时保留具体分数、分差与权重。每项可跳到原有评分理由和引用依据；无变化、下降和暂不评分都会如实展示。缺失评分使用虚线圆环，零分使用实线空环，两者不会混淆。移动端采用紧凑横排卡片。没有新增依赖或模型调用，计算方式和权重保持不变。
+
+本版经用户确认的权重在 `lib/score-comparison.ts` 的 `SCORE_WEIGHTS`：岗位匹配 25%、个人贡献 15%、方法与工具 15%、成果与证据 15%、表达清晰度 10%、事实一致性 20%。这是产品配置，尚未经过人工样本校准。
+
+总分 = Σ（维度分数 × 权重）÷ Σ（参与计算的权重）÷ 3 × 100，保留一位小数；分差使用两个已显示总分的差。只有前后都能评分、且权重大于零的维度参与两个总分，缺失维度同时从双方排除，并重新归一化权重。界面标明参与项数和未计入的维度，没有可比维度时不显示总分；不把缺失评分当成零分。事实风险继续独立展示。
+
+修改简历或审阅选择后，旧评估及其图表一同失效，需重新评估。计算回归：`node tests/score-comparison.cjs`（不调用模型）。
 
 ## 文档
 
