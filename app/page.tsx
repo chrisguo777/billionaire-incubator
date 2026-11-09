@@ -15,6 +15,7 @@ import type { Asked, ExperienceDB, Gap, GapStatus, JDAnalysis, Requirement } fro
 import type { RankedCard, ResumeOutput, RewrittenCard } from "@/lib/pipeline";
 import { docToHTML, fitResumeToOnePage, resumeFileName } from "@/lib/resume-doc";
 import ScoreComparison from "./components/score-comparison";
+import JobPicker from "./job-picker";
 
 const MAX_QUESTIONS = 3; // 追问停止条件尚未最终确定，demo 先固定为 3 题
 
@@ -462,6 +463,7 @@ export default function Page() {
           </label>
           <span className="note">追问用这个语言提出，回答用中文或英文都可以。生成的简历始终和上传的简历语言一致，不受这里影响。</span>
         </div>
+        <JobPicker disabled={!!busy} onUse={setJdText} />
         <div className="grid2">
           <textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} aria-label="CV" />
           <textarea value={jdText} onChange={(e) => setJdText(e.target.value)} aria-label="JD" />

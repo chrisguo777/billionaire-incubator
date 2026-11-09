@@ -289,3 +289,20 @@ details summary { cursor: pointer; color: var(--accent); margin-top: 10px; }
   .score-dimension-center small { font-size: 9px; }
   .score-dimension-center > span:last-child { font-size: 8px; }
 }
+/* JD picker: company autocomplete and job link */
+.job-picker { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; background: var(--bg); }
+.job-picker h3 { font-size: 14.5px; margin: 0 0 8px; }
+.job-picker input { width: 100%; font: inherit; font-size: 14px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+.job-picker input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.job-picker label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+.picker-fields { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin: 6px 0; }
+.picker-fields .combo, .picker-fields .field { flex: 1 1 200px; min-width: 0; }
+.picker-fields .field.grow { flex: 3 1 260px; }
+.combo { position: relative; }
+.combo-list { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin: 4px 0 0; padding: 4px 0; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14); max-height: 280px; overflow-y: auto; }
+.combo-list li { display: flex; align-items: center; gap: 10px; padding: 7px 10px; cursor: pointer; font-size: 14px; }
+.combo-list li.active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.combo-list img, .logo-fallback { width: 22px; height: 22px; border-radius: 50%; flex: none; object-fit: contain; }
+.logo-fallback { display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: var(--surface); font-size: 12px; font-weight: 600; }
+.combo-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combo-domain { color: var(--muted); font-size: 12.5px; }
