@@ -1,7 +1,7 @@
 # 给 AI 助手的项目说明
 
 > 读者：加入项目的成员的 AI 助手（Claude Code、Codex 等）。请先读完本文，再动手。
-> 最后更新：2026-11-02（合并 #6、#7、#9、#11、#12 之后）。以仓库里的文件为准；本文与代码不一致时，以代码为准，并告诉用户。
+> 最后更新：2026-11-12（合并 #20 之后；#15–#18 的内容已同步）。以仓库里的文件为准；本文与代码不一致时，以代码为准，并告诉用户。
 > **开始工作前先 `git pull` 拿最新 main，再读 `CHANGELOG.md` 最上面一段**：里面写了最近合并了什么、怎么验证的、还有哪些已知问题。
 
 ## 1. 项目是什么
@@ -15,6 +15,7 @@
 ### 证据强度（请诚实对待）
 
 - 用户问卷只有 **5 份**，渠道主要是微信/同学圈，只能当假设来源，不能当结论。
+  - 问卷里看到的（2026-10-14 整理）：几乎所有人都说不清团队项目里的个人贡献；有人直说缺数据时会"瞎编量化数据"；对 AI 改简历的不满是编出用户没给的数字或把职责写大、写得泛不贴岗位、表达不准、乱改排版；每份简历耗时从每个 JD 不超过 30 分钟到 7–8 小时不等；觉得有效的做法是把原始经历喂给 AI、给优秀简历范本、让 AI 通过问答帮忙回忆。
 - 竞品调研是 AI 整理的，厂商数据未核实，团队尚未亲手跑过 Huntr/Rezi。
 - 不要把这些当作已验证的结论写进任何材料。
 
@@ -44,14 +45,16 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 
 | 步骤 | AI 做 | 代码规则做 |
 |---|---|---|
-| 简历解析 | 把文字拆成经历 → 卡片 → 格子，并把每张卡片对应到完整的原句 | 分配 id；切分原句（`extractOriginalBullets`）；CV 内容一律标"已确认"、出处 cv_parse；用 Zod 校验格式 |
+| 简历解析 | 把文字拆成经历 → 卡片 → 格子，并把每张卡片对应到完整的原句；提取姓名和联系方式 | 分配 id；切分原句（`extractOriginalBullets`）；CV 内容一律标"已确认"、出处 cv_parse；用 Zod 校验格式；姓名、联系方式和职位只保留能在原文里找到的；识别简历目标语言（`detectLanguage`） |
+| 输入目标 JD（可选：粘贴岗位链接） | 只在前两种方式都读不到时，从网页正文逐字提取 JD | 先试 Greenhouse / Lever / Ashby 官方接口，再试网页里的结构化岗位信息；AI 提取结果逐行和原网页比对，对不上时提示；结果只填进 JD 文本框，由用户检查（`lib/job-sources.ts`） |
 | JD 分析 | 把 JD 拆成带优先级的要求 | — |
 | JD 与经历匹配 | 为每条要求找证据，必须引用事实 id | `detectGaps`：丢弃不存在的 id，只认"已确认"的证据 |
 | 缺口检测 | — | 先看用户是否答过"没有"（→ True Gap）；有"我的动作"且卡片有已确认成果 → Covered；有证据但不满足 → Weak；否则 Unknown |
-| 针对性追问 | 措辞成一句简短的问话（提示词要求 ≤3 句、约 80 字，不保证）；把回答整理成事实 | `pickGap`：只挑 Weak/Unknown 且没问过的，按优先级排，Weak 先于 Unknown；JD 问题最多 3 题；成果仍标"待确认"。「不足三段经历时另行补充追问」已实现但暂时关闭（`lib/experience-target.ts` 里 `TARGET_EXPERIENCES = 0`，见 CHANGELOG） |
+| 针对性追问 | 用用户选的沟通语言措辞成一句简短的问话（提示词要求 ≤3 句、约 80 字，不保证）；把回答整理成事实（写成简历目标语言） | `pickGap`：只挑 Weak/Unknown 且没问过的，按优先级排，Weak 先于 Unknown；JD 问题最多 3 题；成果仍标"待确认"。「不足三段经历时另行补充追问」已实现但暂时关闭（`lib/experience-target.ts` 里 `TARGET_EXPERIENCES = 0`，见 CHANGELOG） |
 | 经历排序与保留 | — | `rankCards` 按已确认的匹配证据加权排序，全部经历默认保留；证据不足只作提示（证据情况分三档：已有匹配证据 / 证据不足 / 暂无匹配证据），用户勾选决定保留哪些经历；顺序由用户选「JD 匹配度」或「经历时间」（`lib/resume-order.ts`） |
-| Bullet 改写 | 对每条原句给一条改写建议（保持原语言，不需要改就保留原文），并标注来源 id；追问新增的内容另给新 bullet | `checkBullet`：无来源、引用未确认事实、出现来源里没有的数字，该条被拦截；用户未操作时简历保留原句，点「接受这条」才替换，「排除」才删除整条 |
-| 生成简历 | — | `assembleResume`：先生成结构化的 `ResumeDoc`，Markdown、网页预览、PDF（浏览器打印）、Word 都从它生成，内容一致 |
+| Bullet 改写 | 对每条原句给一条改写建议（统一写成简历目标语言，不需要改就保留原文），并标注来源 id；追问新增的内容另给新 bullet | `checkBullet`：无来源、引用未确认事实、出现来源里没有的数字，该条被拦截；只有实际改动的句子进入审阅；用户未操作时简历保留原句，点「接受这条」才替换，「排除」才删除整条 |
+| 生成简历 | — | `assembleResume`：先生成结构化的 `ResumeDoc`（含姓名和联系方式抬头），Markdown、网页预览、PDF（浏览器打印）、Word 都从它生成，内容一致；默认压缩到 1 页，可切换自然分页；不是目标语言的内容列为警告 |
+| 质量评估 | 对比原简历和当前预览，按六个维度打 0–3 分（目前固定用中文输出） | 核验评估引用是否出自原文；加权总分由代码计算（权重在 `lib/score-comparison.ts`），只计前后都有分的维度 |
 
 ## 5. 经历库 schema
 
@@ -61,14 +64,14 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 
 ## 6. 代码地图与当前进度
 
-技术栈：Next.js + TypeScript + Zod + Anthropic SDK。运行方式见 `README.md`。
+技术栈：Next.js + TypeScript + Zod + Anthropic SDK。运行方式见 `README.md`；常用命令和架构要点（哪些必须留在代码规则里）见根目录 `AGENTS.md`；各功能的详细行为见 `docs/功能规则.md`。
 
 - `lib/pipeline.ts`：各步骤逻辑；`lib/schema.ts`：类型与 Zod schema；`lib/llm.ts`：模型调用与 live/mock 切换；`lib/mock.ts`：无 key 时的假数据；`app/api/step/route.ts`：无状态 API，按 step 分发（parse / jd / analyze / question / answer / evaluate / review / finish）；`app/api/resume/route.ts`：上传 PDF / Word / TXT 并提取文字；`app/page.tsx`：单页界面（已标注每步由 AI / 代码规则 / 用户完成）。
-- 其他模块：`lib/original-bullets.ts` 切分并保存原简历的完整 bullet；`lib/review.ts`、`lib/review-types.ts` 逐条审阅（接受 / 编辑 / 排除）后重新校验并组装简历；`lib/resume-order.ts`、`lib/resume-selection.ts` 经历排序方式与保留选择；`lib/resume-doc.ts`、`lib/resume-docx.ts` 结构化简历到预览 / PDF / Word；`lib/evaluation.ts`、`lib/evaluation-schema.ts` 简历质量评估（六个维度，引用由代码核验）；`lib/experience-target.ts`、`lib/experience-discovery.ts` 「补足三段经历」追问（目前关闭）；`lib/language.ts` 语言规则：识别简历目标语言、检查非目标语言内容、按语言给出章节标题。
-- 语言：**沟通语言**由用户在第 1 节选（中文 / English），只决定追问用什么语言；**简历目标语言**在解析时根据上传简历自动识别，存在经历库的 `resume_language` 字段，用户可在第 2 节修改。回答抽取成事实、改写 bullet、最终简历章节标题都统一用目标语言；最终简历里不是目标语言的内容由代码列为警告（英文简历出现任何汉字；中文简历出现以英文为主的整句）。回归测试：`tests/language.cjs`。
+- 其他模块：`lib/original-bullets.ts` 切分并保存原简历的完整 bullet；`lib/review.ts`、`lib/review-types.ts` 逐条审阅（接受 / 编辑 / 排除）后重新校验并组装简历；`lib/resume-order.ts`、`lib/resume-selection.ts` 经历排序方式与保留选择；`lib/resume-doc.ts`、`lib/resume-docx.ts` 结构化简历到预览 / PDF / Word；`lib/evaluation.ts`、`lib/evaluation-schema.ts` 简历质量评估（六个维度，引用由代码核验）；`lib/experience-target.ts`、`lib/experience-discovery.ts` 「补足三段经历」追问（目前关闭）；`lib/language.ts` 语言规则：识别简历目标语言、检查非目标语言内容、按语言给出章节标题；`lib/review-display.ts` 决定审阅区显示哪些 bullet；`lib/score-comparison.ts`、`app/components/score-comparison.tsx` 加权总分与评分圆环；`app/job-picker.tsx`、`app/api/job/route.ts`、`app/api/company/route.ts`、`lib/job-sources.ts` 公司名补全和岗位链接读取 JD，`lib/job-text.ts` 把网页转成文字、识别招聘系统链接，`lib/safe-fetch.ts` 抓取用户给的链接时防止访问内网。
+- 语言：**沟通语言**由用户在第 1 节选（中文 / English），只决定追问用什么语言；**简历目标语言**在解析时根据上传简历自动识别，存在经历库的 `resume_language` 字段，用户可在第 2 节修改。回答抽取成事实、改写 bullet、最终简历章节标题都统一用目标语言；最终简历里不是目标语言的内容由代码列为警告（英文简历出现任何汉字；中文简历出现以英文为主的整句）。质量评估目前仍固定用中文输出。回归测试：`tests/language.cjs`。
 - `tests/`：回归脚本，没有测试框架，手动运行，例如 `node tests/bullet-review.cjs`（需要 Node 24+；不调用付费 API，`tests/evaluation/` 里的重复评估脚本除外）。`tests/experience-discovery.cjs` 断言三段经历的行为，在该功能关闭期间会失败。
 - **mock 模式不读用户输入**，只返回内置示例。想用真实 CV 和 JD 必须用 live（需要 `ANTHROPIC_API_KEY`）。
-- live 模式已用真实 key 跑过：解析、匹配、追问、改写、逐条审阅、排序、预览与导出已手动走通（2026-11-02，Paxton 的会话）；评估在 2026-10-25 走通。样本只有 1–2 份简历，稳定性尚未系统验证。
+- live 模式各功能的验证情况见 `CHANGELOG.md` 每段的「验证」。样本只有 1–2 份简历，稳定性尚未系统验证。
 
 ### 已拍板
 
@@ -76,26 +79,35 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 - 对话里得到的数字先标"待确认"，用户点确认才能进简历；简历只用已确认事实。
 - 缺口状态由代码规则判断；v0 不让模型自己决定下一步。
 - demo 阶段 JD 针对性追问最多 3 题。「不足三段经历时另行补充追问」已实现但暂时关闭，是否重开见下方「未拍板」。
+- 简历目标语言暂时留在第 2 节设置（11/08 会议提过挪到最后生成简历的地方，暂不改）。
 
 ### 未拍板
 
 - 追问的最终停止条件；是否把 schema 合并稿与团队确认的节奏；demo 的最终受众和演示程度。
 - 挖掘阶段看不看 JD（Paxton：JD 驱动；Christine：先通用挖掘，再按 JD 补挖）。
 - "Agent"在我们这里具体指什么。
-- 「补足三段经历」追问是否保留、何时重开（目前 `TARGET_EXPERIENCES = 0`）；它的话术和「不足三段时拒绝评估」的门槛没有团队确认。
-- Ziyue 的 #5 里没带入的三项（同一段经历内 bullet 按重要程度排序、规范检查表 `lib/standards.ts`、改写提示词）是否需要，以及如何与「保留原句」兼容（这三项只在 #5 分支里，没有合并）；Christine 的 #10（隐私模式与占位 Word 导出）暂缓。
-- 拖拽组装、数据库持久化：都推后。（中英双语：沟通语言与简历目标语言分开设置，见 `lib/language.ts`）（PDF / Word 导出已实现，见 `lib/resume-doc.ts`、`lib/resume-docx.ts`）
+- 「补足三段经历」追问是否保留、何时重开（目前 `TARGET_EXPERIENCES = 0`）；它的话术，以及经历不足时是拦住评估还是只提醒，没有团队确认。
+- Ziyue 的 #5 里没带入的三项（同一段经历内 bullet 按重要程度排序、规范检查表 `lib/standards.ts`、改写提示词）是否需要，以及如何与「保留原句」兼容（这三项只在 #5 分支里，没有合并）；Christine 的 #10（隐私模式与占位 Word 导出）已关闭，暂缓。
+- ATS 规则是否、如何接入 demo（11/01 会议待检查）。
+- 按公司和职位搜索岗位的数据源：Adzuna 免费额度不够，已放弃；其他方案待定。目前选了公司后没有下一步。
+- 拖拽组装、数据库持久化：都推后。
+- 核心用户与市场：Shera 的框架是同时找中美实习 / 校招的学生、要中英双语；问题概述偏美国 ATS / Huntr 视角；竞品报告建议押"中美夹缝"；访谈里找大陆工作的人认为岗位对简历的针对性要求没那么高，和"高度 targeted"的前提有张力。
+- 目标岗位：Shera 列的是 SDE / PM / Operations / DA·BA；问卷里出现的是运营、项目管理、分析、innovation manager，范围比框架宽。
+- "好简历"的定义散在几处：strong verbs 与技能前置；action + what + method + result；STAR 与风格一致；JD 相关 + ATS 可读 + 有事实支撑；Rubric v1（9 个维度）最系统。现在的质量评估用的是六个维度。
 
 ### 已知问题（请不要假装它们不存在）
 
+新问题统一记在 `CHANGELOG.md`：每段末尾的「已知问题」（编号跨段连续，越往上越新），以及后一段对前一段问题的「处理情况」。开始工作前请读最上面两段。团队给人看的问题清单在 Google Drive 的「功能开发排期表（问题清单）」，和 CHANGELOG 有重合，由团队自己填写。
+
+下面几条是项目早期发现、CHANGELOG 里没有编号的问题，仍然存在，留在这里：
+
 1. **追问可能重复**：JD 分析可能把相近的要求拆成两条（如"做仪表盘"和"用 Tableau"）。已让提问步骤看到之前的问答，但这只是提示词约束，不保证。
 2. **"已覆盖"的标准偏松**：只要有"我的动作"且同一张卡片上有任何已确认的成果即可，成果不要求有数字，也不要求与这条要求相关。
-3. **事实校验只查数字**：AI 把"参与"改成"主导"、把团队动作写成个人动作，目前拦不住；中文数字既会误拦（事实写「一页半」，模型写成 1.5 会被拦），也会漏查（bullet 里的「三倍」不检查）。
+3. **事实校验只查数字**：AI 把"参与"改成"主导"、把团队动作写成个人动作，目前拦不住。（中文数字的问题见 CHANGELOG 已知问题 12。）
 4. **对话里的文字类事实直接标"已确认"**，只有数字类成果标"待确认"。
 5. 匹配步骤有 AI 波动：同一份数据两次匹配可能引用不同的事实。
 6. `workflow-v1.md` 写的"解析不合格自动重试"，代码里没有实现，校验失败就是报错。
-7. 导出的简历没有姓名和联系方式抬头（教育经历已加入：CV 解析时单独存进 `education`，生成简历时照搬原文放在 EXPERIENCE 之前，不经过 AI 改写；暂不参与 JD 匹配）；上传支持可复制文字的 PDF、Word（.docx）和 TXT，扫描件不支持；状态只存在浏览器里，刷新即丢失。
-8. 其他已知问题（改写稿与原句相同、原句粘着下一段经历的标题等）见 `CHANGELOG.md` 最新一段的「已知问题」，那里最新、最完整。
+7. 上传只支持可复制文字的 PDF、Word（.docx）和 TXT，扫描件不支持；状态只存在浏览器里，刷新即丢失。
 
 ## 7. 协作规则
 
@@ -109,8 +121,9 @@ Paxton 的方案只是其中一种；C 和 S 的设计与它不完全一样。�
 - PR 合并后，由 Paxton 在 `CHANGELOG.md` 最上面加一段（日期、PR 编号、新增、修复、验证、已知问题）。
 - 永远不要把 API key 写进代码、文档、聊天或提交；key 只放在 `.env.local`（已被 git 忽略）。
 - 前端和产品细节（拖拽等）先放一放，以 workflow 和数据结构为主。
+- 给所有成员 AI 的规则写在根目录 `AGENTS.md`（`CLAUDE.md` 只引入它），改动走 PR。
 
-## 8. 其他说明
+## 8. 其他文档
 
-- `docs/new-session-prompt.md` 是 Paxton 写给自己 AI 助手的开场稿，里面的"我"指 Paxton，**不是**给其他成员的指令。
-- `docs/项目进度汇总.md` 汇总了 Drive 全部文档，以及各作者文档之间的出入，可以作为背景阅读。
+- `docs/功能规则.md`：审阅、评分、排序、经历保留、补足三段经历等功能的详细行为规则。
+- `docs/workflow-v1.md`、`docs/schema-v1.md`：设计草案，记录设计取舍和待团队确认的问题；与代码不一致时以代码为准。

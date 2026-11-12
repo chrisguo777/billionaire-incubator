@@ -1,5 +1,7 @@
 # Workflow v1（以 Paxton 的 12 步为骨架）
 
+> 设计草案，与代码不一致时以代码为准（代码说明见根目录 `AGENTS.md`，进度见 `CHANGELOG.md`）。
+
 约定：C = Christine，S = Shera，J = Jade P=Paxton。本文是 Week2「最终 Workflow 图」的草案，v0 范围内每一步写清 Input / Processing / Output / 是否 LLM / 是否 Agent。
 
 ## 0. 两条设计原则
