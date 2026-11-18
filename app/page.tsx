@@ -62,8 +62,14 @@ async function call<T>(body: Record<string, unknown>): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? "request failed");
+  // A timeout or proxy error page is HTML, not JSON; show a Chinese hint instead of a parse error.
+  const data = await res.json().catch(() => null);
+  if (!data) {
+    throw new Error(res.ok
+      ? "服务器返回的内容无法读取，请再试一次；已完成的步骤不会丢失。"
+      : `服务器没有正常响应（${res.status}），可能是处理超时，请稍后再试；已完成的步骤不会丢失。`);
+  }
+  if (!res.ok) throw new Error(data.error ?? `请求失败（${res.status}），请再试一次`);
   return data as T;
 }
 
@@ -113,6 +119,9 @@ export default function Page() {
   }, []);
 
   const newIds = useMemo(() => new Set(turns.flatMap((t) => t.added_ids)), [turns]);
+  const cvEmpty = !cv.trim();
+  const jdEmpty = !jdText.trim();
+  const missingInput = cvEmpty && jdEmpty ? "请先填写简历和 JD" : cvEmpty ? "请先上传或粘贴简历" : jdEmpty ? "请先粘贴 JD" : null;
 
   async function guard<T>(label: string, fn: () => Promise<T>): Promise<T | undefined> {
     setBusy(label);
@@ -473,8 +482,8 @@ export default function Page() {
         )}
         {provider === "anthropic" && !providerConfigured && <p className="note" role="status">已切换为 Anthropic API。请在项目根目录的 .env.local 中填写 ANTHROPIC_API_KEY，再重启开发服务并刷新页面。</p>}
         <div className="row">
-          <button onClick={runAnalysis} disabled={!!busy}>解析并分析</button>
-          {busy && <span className="note">{busy}</span>}
+          <button onClick={runAnalysis} disabled={!!busy || !!missingInput}>解析并分析</button>
+          {busy ? <span className="note">{busy}</span> : missingInput && <span className="note" role="status">{missingInput}</span>}
         </div>
         {error && <div className="err">出错：{error}</div>}
       </section>
