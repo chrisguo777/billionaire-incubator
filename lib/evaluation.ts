@@ -14,13 +14,19 @@ export function confirmedFacts(db: ExperienceDB) {
   ];
 }
 
+// The schema cannot require "each of the six dimensions exactly once", so this runs as
+// callStructured's check: an incomplete report retries the evaluation step.
+export function assertCompleteDimensions(report: Evaluation): void {
+  if (report.dimensions.length !== 6 || new Set(report.dimensions.map((d) => d.id)).size !== 6) {
+    throw new Error("评估返回的维度不完整，请重试");
+  }
+}
+
 export function validateEvidence(report: Evaluation, before: string, after: string, db: ExperienceDB, jd: JDAnalysis) {
   const facts = confirmedFacts(db);
   const texts = { before, after, confirmed: facts.map((f) => f.text).join("\n"), jd: jd.requirements.map((r) => r.text).join("\n") };
   const warnings: string[] = [];
-  if (report.dimensions.length !== 6 || new Set(report.dimensions.map((d) => d.id)).size !== 6) {
-    throw new Error("评估返回的维度不完整，请重试");
-  }
+  assertCompleteDimensions(report);
   for (const dimension of report.dimensions) {
     for (const version of ["before", "after"] as const) {
       const assessment = dimension[version];
@@ -70,6 +76,6 @@ export async function evaluateResume(before: string, after: string, db: Experien
     "fact_risks 的quote必须来自after，source_ids只引用confirmed里的id；缺乏支持时可为空数组。区分明确矛盾和缺少依据需用户核实。",
     "missing记录未提供信息，suggestion和next_actions仅建议核实或改善表达，绝不替用户补写未经确认的数字、职责或能力。",
     "评估仅针对当前文字内容；评估岗位相关内容时跳过简历抬头的姓名、联系方式和姓名占位符。不评估排版、文件解析质量或预测ATS通过率。不要强求修改稿比原稿高分。",
-  ].join("\n"), JSON.stringify({ before, after, confirmed: facts, jd: jd.requirements }), "medium");
+  ].join("\n"), JSON.stringify({ before, after, confirmed: facts, jd: jd.requirements }), "medium", { check: assertCompleteDimensions });
   return { version: EVALUATION_VERSION, mode, ...validateEvidence(report, before, after, db, jd) };
 }

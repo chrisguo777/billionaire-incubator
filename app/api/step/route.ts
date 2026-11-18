@@ -1,5 +1,6 @@
 import { isResumeSortMode, orderResumeCards } from "@/lib/resume-order";
-import { InvalidCardSelectionError, selectResumeCards } from "@/lib/resume-selection";
+import { selectResumeCards } from "@/lib/resume-selection";
+import { toUserFacingError } from "@/lib/errors";
 import { discoveryState, experienceQuestion, needsExperienceDiscovery, TARGET_EXPERIENCES } from "@/lib/experience-target";
 import { applyDiscoveryAnswer } from "@/lib/experience-discovery";
 import { NextResponse } from "next/server";
@@ -29,6 +30,8 @@ export async function GET() {
   return NextResponse.json({ mode: getMode(), provider: getProvider(), configured: isProviderConfigured(), evaluationVersion: EVALUATION_VERSION });
 }
 
+const isBlank = (text: unknown) => typeof text !== "string" || !text.trim();
+
 async function analyze(db: ExperienceDB, jd: JDAnalysis, asked: Asked) {
   const matches = await matchExperience(db, jd);
   return { matches, gaps: detectGaps(db, jd, matches, asked) };
@@ -42,9 +45,11 @@ export async function POST(req: Request) {
     if (!isResumeSortMode(sortMode)) return NextResponse.json({ error: "排序方式无效，请选择 JD 匹配度或经历时间" }, { status: 400 });
     switch (body.step) {
       case "parse": {
+        if (isBlank(body.cv)) return NextResponse.json({ error: "简历内容为空，请先上传或粘贴简历文字" }, { status: 400 });
         return NextResponse.json({ mode, db: await parseCV(body.cv) });
       }
       case "jd": {
+        if (isBlank(body.jd)) return NextResponse.json({ error: "JD 内容为空，请先粘贴岗位描述，或用岗位链接读取" }, { status: 400 });
         return NextResponse.json({ mode, jd: await analyzeJD(body.jd) });
       }
       case "analyze": {
@@ -114,7 +119,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: `unknown step: ${body.step}` }, { status: 400 });
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: err instanceof InvalidCardSelectionError ? 400 : 500 });
+    console.error("[api/step] step failed:", err);
+    const { status, message } = toUserFacingError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 }
