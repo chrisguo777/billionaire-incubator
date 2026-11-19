@@ -6,6 +6,35 @@ AI 简历 Agent 的最初版 demo：CV + JD → 解析 → JD 匹配 → 缺口�
 
 > 想让你的 AI 助手（Claude Code / Codex 等）读懂项目：它们会自动读根目录的 [AGENTS.md](AGENTS.md)（Claude Code 通过 `CLAUDE.md` 引入），里面会让它接着读 [docs/给AI的项目说明.md](docs/给AI的项目说明.md) 和 `CHANGELOG.md`。
 
+## 团队与贡献
+
+四人团队在 2026 年 9–11 月完成。按英文名字母顺序列出每个人负责的部分和对应的 Pull Request；每次合并的细节见 [CHANGELOG.md](CHANGELOG.md)。
+
+- **Christine**（[@christineyang567](https://github.com/christineyang567)）
+  - 简历抬头（姓名、联系方式）、职位加粗、默认压缩至一页的排版，以及打印时去掉浏览器附加的日期和网址（[#16](https://github.com/chrisguo777/billionaire-incubator/pull/16)）
+  - 开发逻辑图解：经历库采用的 affiliation → card → field 三层结构、成果的"口径"字段和每个格子的确认状态（见 [docs/schema-v1.md](docs/schema-v1.md)）
+  - 隐私模式与占位 Word 导出（[#10](https://github.com/chrisguo777/billionaire-incubator/pull/10)，已提交，未合并）
+  - 测试反馈：追问会问简历里已有的学历、一段经历被拆成多条
+- **Paxton**（[@chrisguo777](https://github.com/chrisguo777)）
+  - 项目发起；产品架构与最初的可运行原型（解析、JD 分析、匹配、缺口规则、追问、改写与事实校验）
+  - workflow 设计稿和经历库 schema 合并稿（[docs/workflow-v1.md](docs/workflow-v1.md)、[docs/schema-v1.md](docs/schema-v1.md)）
+  - 粘贴岗位链接读取 JD、公司名自动补全（[#18](https://github.com/chrisguo777/billionaire-incubator/pull/18)）
+  - 整合简历预览、PDF / Word 导出和追问提示词精简（[#12](https://github.com/chrisguo777/billionaire-incubator/pull/12)）
+  - 结构化输出不合格时自动重试、报错改成中文（[#22](https://github.com/chrisguo777/billionaire-incubator/pull/22)）
+  - 代码审阅与合并，CHANGELOG 和文档维护（[#4](https://github.com/chrisguo777/billionaire-incubator/pull/4)、[#11](https://github.com/chrisguo777/billionaire-incubator/pull/11)、[#13](https://github.com/chrisguo777/billionaire-incubator/pull/13)、[#14](https://github.com/chrisguo777/billionaire-incubator/pull/14)、[#19](https://github.com/chrisguo777/billionaire-incubator/pull/19)–[#21](https://github.com/chrisguo777/billionaire-incubator/pull/21)、[#23](https://github.com/chrisguo777/billionaire-incubator/pull/23)）
+- **Shera**（[@sheraduan729-cloud](https://github.com/sheraduan729-cloud)）
+  - Word / TXT 简历上传、逐条审阅改写稿、基于原文证据的六维质量评估和重复评估脚本（[#3](https://github.com/chrisguo777/billionaire-incubator/pull/3)）
+  - 按 JD 匹配度或经历时间排序（[#6](https://github.com/chrisguo777/billionaire-incubator/pull/6)）
+  - 完整保留原句、未接受改写时保留原句、同一经历内去重（[#7](https://github.com/chrisguo777/billionaire-incubator/pull/7)）
+  - 由用户勾选保留哪些经历，以及不足三段时的补充追问（[#9](https://github.com/chrisguo777/billionaire-incubator/pull/9)）
+  - 加权评分圆环、只审阅实际改动的 bullet、API 配置状态提示（[#15](https://github.com/chrisguo777/billionaire-incubator/pull/15)）
+  - 产品框架与经历卡片设计：经历类型、个人动作与团队动作分开存（见 [docs/schema-v1.md](docs/schema-v1.md)）
+  - 2026 年 11 月的一轮系统测试：记录 10 个问题，每个都附复现步骤和验收标准
+- **Ziyue**（[@Ziyue1296](https://github.com/Ziyue1296)）
+  - 解析和生成简历时加入教育经历（[#2](https://github.com/chrisguo777/billionaire-incubator/pull/2)）
+  - 沟通语言与简历目标语言分开设置，修复英文简历里出现中文（[#17](https://github.com/chrisguo777/billionaire-incubator/pull/17)）
+  - 简历预览、PDF / Word 导出和追问提示词精简的最初实现（[#5](https://github.com/chrisguo777/billionaire-incubator/pull/5)，这三部分经 #12 合并）
+
 ## 第一次在自己电脑上跑起来
 
 ### 1. 需要先安装
@@ -15,7 +44,7 @@ AI 简历 Agent 的最初版 demo：CV + JD → 解析 → JD 匹配 → 缺口�
 
 ### 2. 把项目下载到本机
 
-仓库是私有的，需要 Paxton 先邀请你为协作者，并且你已登录 GitHub。
+在终端运行下面两行，把代码下载到当前文件夹：
 
 ```bash
 git clone https://github.com/chrisguo777/billionaire-incubator.git

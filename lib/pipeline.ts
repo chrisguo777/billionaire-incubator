@@ -346,12 +346,12 @@ const QUESTION_STYLE: Record<Lang, { length: string; filler: string; example: st
   zh: {
     length: "at most 3 short sentences, about 80 Chinese characters",
     filler: "'我很好奇', '比如', '跟我说说', '完全'",
-    example: "你在瑞德赛恩的回归分析影响了哪个决定？有没有哪条保护策略因你的结论被提出或采纳？数据量、关键发现、报告使用方等如有可量化信息也请说明。",
+    example: "你在青川环保研究所的回归分析影响了哪个决定？有没有哪条保护策略因你的结论被提出或采纳？数据量、关键发现、报告使用方等如有可量化信息也请说明。",
   },
   en: {
     length: "at most 3 short sentences, about 50 words",
     filler: "'I'm curious', 'for example', 'tell me about', 'totally'",
-    example: "Which decision did your regression analysis at Reed Sun influence? Was any conservation strategy proposed or adopted because of your findings? If available, share quantifiable details such as data volume, key findings, or who used the report.",
+    example: "Which decision did your regression analysis at Qingchuan Environmental Lab influence? Was any conservation strategy proposed or adopted because of your findings? If available, share quantifiable details such as data volume, key findings, or who used the report.",
   },
 };
 
