@@ -3,6 +3,10 @@
 按日期记录每次合并进 `main` 的改动。每条写清：新增了什么、修复了什么、验证到什么程度、还剩哪些已知问题。
 每次合并 PR 后，在最上面加一段，并附上 PR 编号。
 
+## 2026-11-18（合并 PR #28：设计稿标注为历史记录）
+
+- `docs/workflow-v1.md`、`docs/schema-v1.md` 开头注明是 2026 年 10 月的设计草案、保留作历史记录，文中"待定""待团队确认"的事项不会再更新；workflow 里的成员代号 "J = Jade" 改为 "J = Ziyue"，和 README 一致。
+
 ## 2026-11-18（合并 PR #27：MIT 许可证）
 
 - 新增 `LICENSE`（MIT），版权人写为 Billionaire Incubator contributors（Christine、Paxton、Shera、Ziyue）；README 末尾注明许可证。
