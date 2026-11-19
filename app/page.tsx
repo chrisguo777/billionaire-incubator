@@ -478,7 +478,7 @@ export default function Page() {
           <textarea value={jdText} onChange={(e) => setJdText(e.target.value)} aria-label="JD" />
         </div>
         {mode === "mock" && (
-          <p className="note">Mock 模式只认识内置的示例 CV/JD；换成别的文本需要配置 ANTHROPIC_API_KEY（见 README）。</p>
+          <p className="note">Mock 模式只认识内置的示例 CV/JD；换成别的文本需要配置 ANTHROPIC_API_KEY（模板见 .env.example）。</p>
         )}
         {provider === "anthropic" && !providerConfigured && <p className="note" role="status">已切换为 Anthropic API。请在项目根目录的 .env.local 中填写 ANTHROPIC_API_KEY，再重启开发服务并刷新页面。</p>}
         <div className="row">
