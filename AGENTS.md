@@ -1,8 +1,8 @@
 # Billionaire Incubator
 
-AI 简历 Agent 项目（团队 4 人，代号：C = Christine，S = Shera，J = Jade，Paxton 负责架构与 prototype）。流程设计见 `docs/workflow-v1.md`，经历库 schema 草案见 `docs/schema-v1.md`。
+AI 简历 Agent 项目，v1.0 由四人团队在 2026 年 9–11 月完成，每个人的贡献见 `README.md`。团队协作阶段已于 2026 年 11 月结束，本仓库是公开的 v1.0 版本。流程设计见 `docs/workflow-v1.md`，经历库 schema 草案见 `docs/schema-v1.md`。
 
-本文件是所有 AI 助手（Claude Code、Codex 等）共用的项目说明；Claude Code 通过 `CLAUDE.md` 引入本文件。各成员的个人协作习惯放在自己电脑上的用户级配置里，不写进仓库。
+本文件是所有 AI 助手（Claude Code、Codex 等）共用的项目说明；Claude Code 通过 `CLAUDE.md` 引入本文件。个人协作习惯放在自己电脑上的用户级配置里，不写进仓库。
 
 ## 开始前先读
 
@@ -17,7 +17,7 @@ AI 简历 Agent 项目（团队 4 人，代号：C = Christine，S = Shera，J =
 
 - 本项目是 AI 简历 Agent；原则：**AI 只能扩展表达，不能扩展事实**；简历只用"已确认"的事实；缺口状态由代码规则判断。
 - 用中文回复；提到流程步骤或字段时带上名字和一句话解释，不要只用编号。
-- 不要替团队其他成员做决定；没有用户明确要求，不要 commit、不要 push、不要安装额外依赖。
+- 没有用户明确要求，不要 commit、不要 push、不要安装额外依赖。
 - 不要把 API key 写进任何会被提交的文件；key 只放在 `.env.local`。不要读取 `.env.local` 的内容，需要确认配置时只看变量名，不显示值。
 
 ## 常用命令
@@ -53,8 +53,9 @@ node tests/bullet-review.cjs   # tests/ 下的回归脚本逐个手动运行（�
 
 ## 分支与合并
 
-- `main` 受保护，不能直接推送。在自己的分支开发（命名 `名字/做什么`），通过 Pull Request 合并，由 Paxton 审阅。开始改动前先确认当前不在 `main` 上。
-- PR 合并后，由 Paxton 在 `CHANGELOG.md` 最上面加一段。
+- `main` 受保护，不能直接推送。改动在单独的分支上开发（命名 `名字/做什么`），通过 Pull Request 合并。开始改动前先确认当前不在 `main` 上。
+- 每次合并后，在 `CHANGELOG.md` 最上面加一段，写清改了什么、验证到什么程度、还有哪些已知问题，并附上 PR 编号。
+- 版本用 git 标签标记，团队完成的版本是 `v1.0`。
 
 <!-- BEGIN:nextjs-agent-rules -->
 
