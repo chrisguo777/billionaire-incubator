@@ -3,7 +3,7 @@
 按日期记录每次合并进 `main` 的改动。每条写清：新增了什么、修复了什么、验证到什么程度、还剩哪些已知问题。
 每次合并 PR 后，在最上面加一段，并附上 PR 编号。
 
-## 2026-11-18（多模型接入）
+## 2026-11-18（合并 PR #29：多模型接入）
 
 ### 新增
 - **可以接入任何提供 OpenAI 兼容接口的模型**（解决已知问题 28）：`lib/llm.ts` 的 `callStructured` 现在有两种接入方式。默认仍是 Claude（Anthropic 原生 SDK，`claude-opus-5-5`）；设置 `LLM_PROVIDER=openai-compatible` 并填写 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`，就能用 OpenAI、DeepSeek、豆包（火山方舟）、Gemini 等。新增依赖 `openai`（7.60.0）。
