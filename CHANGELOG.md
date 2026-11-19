@@ -3,7 +3,7 @@
 按日期记录每次合并进 `main` 的改动。每条写清：新增了什么、修复了什么、验证到什么程度、还剩哪些已知问题。
 每次合并 PR 后，在最上面加一段，并附上 PR 编号。
 
-## 2026-11-19（合并 PR #NN：Next.js 安全升级）
+## 2026-11-19（合并 PR #32：Next.js 安全升级）
 
 ### 修复
 - **Next.js 从 16.4.2 升到 16.4.6**：16.2.0–16.4.4 有两个中等风险的公开漏洞（[GHSA-mfr8-8qww-v76h](https://github.com/advisories/GHSA-mfr8-8qww-v76h)、[GHSA-vc7v-qv4w-wrv8](https://github.com/advisories/GHSA-vc7v-qv4w-wrv8)），都是 `'use cache'` / `unstable_cache` 的缓存在不同请求之间串用。项目没有用到这两个功能，实际不受影响；升级是为了消除开发页面上的安全提示和 `npm audit` 警告。锁文件里只有 `next` 和 `@next/*` 平台组件的版本变化。
