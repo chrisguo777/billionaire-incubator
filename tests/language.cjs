@@ -22,7 +22,7 @@ process.env.LLM_MODE = 'mock';
   await test('resume language is detected from the uploaded text', () => {
     assert.equal(detectLanguage('EXPERIENCE\n- Built dashboards in Tableau for 5 clinic managers'), 'en');
     assert.equal(detectLanguage('工作经历\n- 使用 Python 和 SQL 清洗 12 个监测点的数据，搭建 Tableau 看板'), 'zh');
-    assert.equal(detectLanguage('李子悦 Ziyue Li\nEXPERIENCE\nBuilt regression models in R to assess water quality'), 'en');
+    assert.equal(detectLanguage('林小雨 Lin Xiaoyu\nEXPERIENCE\nBuilt regression models in R to assess water quality'), 'en');
   });
 
   await test('foreign-text rule: any Han in English, English-dominant sentences in Chinese', () => {
