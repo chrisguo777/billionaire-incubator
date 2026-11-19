@@ -3,8 +3,9 @@ import { callStructured, getMode } from "./llm";
 import { mockExtractJob, mockSearchCompanies } from "./mock";
 import { decodeEntities, detectAts, findJobPosting, htmlToText, pageTitle, type AtsLink } from "./job-text";
 import { FetchError, safeFetch } from "./safe-fetch";
+import { boardApiUrl, boardPageUrl, boardSlugs, parseBoard, type BoardJob, type BoardKind, type CompanyBoard } from "./job-board";
 
-// Company autocomplete (Logo.dev) and full-JD fetch from a job link.
+// Company autocomplete (Logo.dev), open jobs for a company (public ATS boards) and full-JD fetch from a job link.
 // Autocomplete falls back to a built-in list when its key is missing, like the LLM steps do.
 
 export interface CompanyOption {
@@ -49,6 +50,52 @@ export async function searchCompanies(q: string): Promise<CompanyOption[]> {
   return parsed.data.data.map((c) => ({ name: c.name, domain: c.domain, logo_url: c.logo_url ?? null }));
 }
 
+// ---------- Open jobs for a chosen company ----------
+
+const BOARD_KINDS: BoardKind[] = ["greenhouse", "lever", "ashby"];
+// Lever and Ashby send every full description in the list (Palantir's Lever board is ~5.5 MB),
+// so listings get a larger limit than single pages, and results are cached for a while.
+const BOARD_MAX_BYTES = 20_000_000;
+const BOARD_TTL_MS = 10 * 60 * 1000;
+const boardCache = new Map<string, { at: number; jobs: BoardJob[] }>();
+
+/** Jobs on one board, or [] when the board does not exist (404) or cannot be read. */
+async function readBoard(kind: BoardKind, slug: string): Promise<BoardJob[]> {
+  const key = `${kind}:${slug}`;
+  const hit = boardCache.get(key);
+  if (hit && Date.now() - hit.at < BOARD_TTL_MS) return hit.jobs;
+  let jobs: BoardJob[] = [];
+  try {
+    const page = await safeFetch(boardApiUrl(kind, slug), { accept: "application/json", timeoutMs: 8_000, maxBytes: BOARD_MAX_BYTES });
+    jobs = parseBoard(kind, slug, JSON.parse(page.body));
+  } catch {
+    jobs = [];
+  }
+  boardCache.set(key, { at: Date.now(), jobs });
+  return jobs;
+}
+
+export interface CompanyJobs {
+  boards: CompanyBoard[];
+  jobs: BoardJob[];
+}
+
+/**
+ * Looks for the company's public board on Greenhouse, Lever and Ashby by guessing its board name.
+ * Free and keyless, but only covers companies on these platforms; big employers with their own
+ * career sites (Amazon, Google…) return nothing and the user pastes a job link instead.
+ */
+export async function listCompanyJobs(name: string, domain?: string | null): Promise<CompanyJobs> {
+  const slugs = boardSlugs(name.slice(0, 80), domain?.slice(0, 120));
+  const tries = BOARD_KINDS.flatMap((kind) => slugs.map((slug) => ({ kind, slug })));
+  const results = await Promise.all(tries.map(async (t) => ({ ...t, jobs: await readBoard(t.kind, t.slug) })));
+  // Use only the board with the most jobs: companies that switched platforms often leave an old board
+  // with a few stale postings behind (Ramp still has one on Greenhouse while it hires through Ashby).
+  const best = results.reduce<(typeof results)[number] | null>((a, r) => (r.jobs.length > (a?.jobs.length ?? 0) ? r : a), null);
+  if (!best) return { boards: [], jobs: [] };
+  return { boards: [{ kind: best.kind, slug: best.slug, url: boardPageUrl(best.kind, best.slug) }], jobs: best.jobs };
+}
+
 // ---------- Full JD from a job link ----------
 
 const JobExtraction = z.object({
@@ -61,8 +108,8 @@ const JobExtraction = z.object({
 const MIN_DESCRIPTION = 200;
 const MAX_PAGE_CHARS = 40_000;
 
-async function fetchJson(url: string): Promise<unknown> {
-  const page = await safeFetch(url, { accept: "application/json" });
+async function fetchJson(url: string, maxBytes?: number): Promise<unknown> {
+  const page = await safeFetch(url, { accept: "application/json", ...(maxBytes ? { maxBytes } : {}) });
   return JSON.parse(page.body);
 }
 
@@ -84,7 +131,8 @@ async function fromAts(ats: AtsLink): Promise<Omit<FetchedJob, "url" | "warnings
       if (!description) return null;
       return { title: job.text ?? null, company: ats.company, description, method: "ats_api" };
     }
-    const board = await fetchJson(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(ats.org)}`) as
+    // Ashby has no single-job endpoint, so the whole board is read; large boards (Ramp ~3.1 MB) exceed the page limit.
+    const board = await fetchJson(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(ats.org)}`, BOARD_MAX_BYTES) as
       { jobs?: { id?: string; title?: string; descriptionPlain?: string; descriptionHtml?: string }[] };
     const job = board.jobs?.find((j) => j.id === ats.jobId);
     const description = job?.descriptionPlain ?? (job?.descriptionHtml ? htmlToText(job.descriptionHtml) : "");
