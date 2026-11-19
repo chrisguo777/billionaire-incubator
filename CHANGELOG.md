@@ -3,6 +3,24 @@
 按日期记录每次合并进 `main` 的改动。每条写清：新增了什么、修复了什么、验证到什么程度、还剩哪些已知问题。
 每次合并 PR 后，在最上面加一段，并附上 PR 编号。
 
+## 2026-11-18（合并 PR #29：多模型接入）
+
+### 新增
+- **可以接入任何提供 OpenAI 兼容接口的模型**（解决已知问题 28）：`lib/llm.ts` 的 `callStructured` 现在有两种接入方式。默认仍是 Claude（Anthropic 原生 SDK，`claude-opus-5-5`）；设置 `LLM_PROVIDER=openai-compatible` 并填写 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`，就能用 OpenAI、DeepSeek、豆包（火山方舟）、Gemini 等。新增依赖 `openai`（7.60.0）。
+- **结构化输出**：OpenAI 兼容接口默认用 `json_schema` 严格模式（Zod schema 转成 JSON Schema）；服务商返回 400 拒绝时，自动改用 `json_object`，把 schema 写进提示词。两种方式最后都用 Zod 校验，不合格时走 #22 的重试。也可以用 `LLM_JSON_MODE=json_object` 直接指定。
+- 可选配置：`LLM_MAX_TOKENS`、`LLM_MAX_TOKENS_PARAM`、`LLM_REASONING_EFFORT`；`.env.example` 写了各家的网址示例。
+- 页面顶部显示当前的接入方式和模型名，例如"LIVE · Anthropic API · claude-opus-5-5"；`lib/errors.ts` 把 `openai` SDK 的错误也转成中文提示。
+
+### 验证
+- 新增 `tests/llm-providers.cjs`（13 项，用假客户端，不调用付费 API）：请求格式、严格 schema、无效 JSON / 不符合 schema / 输出被截断时重试、拒答不重试、400 时改用 json_object、错误提示、GET 接口返回接入方式和模型。其余回归脚本只有已知问题 13 的 `experience-discovery.cjs` 失败；`tsc --noEmit` 和 `npm run build` 通过。
+- 项目里所有通过 `callStructured` 调用的 schema 转成 JSON Schema 后都满足严格模式（字段都必填、不允许多余字段）。
+- 页面顶部的状态显示在浏览器里确认过。
+- **没有验证**：用任何一家的真实 key 调用。OpenAI 的 gpt-6.x 在 Chat Completions 接口上是否接受严格 `json_schema`、DeepSeek 和豆包的实际效果，都还没有测过。
+
+### 已知问题（本次合并没有修复）
+37. **其他模型的效果没有评估**：提示词都是在 Claude 上调的。换成其他模型能跑通，但改写质量、追问质量、拒答和格式错误的频率都不知道。
+38. **推理强度没有自动对应**：Claude 的 `effort`（low / medium / high）不会传给其他模型；需要时用 `LLM_REASONING_EFFORT` 手动设置，而且只对支持这个参数的模型有效。
+
 ## 2026-11-18（合并 PR #28：设计稿标注为历史记录）
 
 - `docs/workflow-v1.md`、`docs/schema-v1.md` 开头注明是 2026 年 10 月的设计草案、保留作历史记录，文中"待定""待团队确认"的事项不会再更新；workflow 里的成员代号 "J = Jade" 改为 "J = Ziyue"，和 README 一致。

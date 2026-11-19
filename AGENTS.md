@@ -33,7 +33,8 @@ node tests/bullet-review.cjs   # tests/ 下的回归脚本逐个手动运行（�
 - 模型配置写在 `.env.local`（模板见 `.env.example`），改完必须重启 `npm run dev`：
   - `.env.example` 默认带 `LLM_PROVIDER=anthropic`：照模板复制但没填 `ANTHROPIC_API_KEY` 时会报错提示，不会静默进入 mock。
   - 完全没有配置，或设置 `LLM_MODE=mock`（有 key 也生效），进入 **MOCK 模式**：不读用户输入，永远返回 `lib/mock.ts` 的示例数据。
-  - 可选 `ANTHROPIC_MODEL`（默认 `claude-opus-5-5`）。目前只支持 Anthropic。
+  - 可选 `ANTHROPIC_MODEL`（默认 `claude-opus-5-5`）。
+  - 也可以用任何提供 OpenAI 兼容接口的模型（OpenAI、DeepSeek、豆包、Gemini 等）：`LLM_PROVIDER=openai-compatible`，再填 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`。可选项和各家网址见 `.env.example`。提示词是在 Claude 上调的，其他模型的效果没有评估过。
 - `tests/` 下的脚本不调用付费 API，`tests/evaluation/` 里的重复评估脚本除外。`tests/experience-discovery.cjs` 在「补足三段经历」关闭期间会失败（CHANGELOG 已知问题 13），其余应通过。
 - Next.js 版本较新，与训练数据可能不一致；写 Next 相关代码前先读 `node_modules/next/dist/docs/`。本文件末尾的 nextjs-agent-rules 块由 `next dev` 自动生成和维护，保留即可，不要手动改。
 - 路径别名 `@/` 指向仓库根目录（如 `@/lib/pipeline`）。
@@ -45,7 +46,7 @@ node tests/bullet-review.cjs   # tests/ 下的回归脚本逐个手动运行（�
 - **无状态后端，状态在浏览器**：`app/api/step/route.ts` 是唯一业务入口，用 `body.step` 分发（`parse` / `jd` / `analyze` / `question` / `answer` / `finish` / `review` / `evaluate`）。每次请求都由 `app/page.tsx` 把完整的 `db`、`jd`、`gaps`、`asked`、`history` 等带上来，服务端不存任何东西，刷新页面即丢失。
 - **其他接口**：`app/api/resume/route.ts` 上传 PDF / Word / TXT 并提取文字（`app/api/pdf/route.ts` 是旧的兼容入口）；`app/api/job/route.ts` 从岗位链接读取完整 JD；`app/api/company/route.ts` 公司名补全。
 - **`lib/pipeline.ts` 把两类步骤放在一起**：AI 步骤（`parseCV`、`analyzeJD`、`matchExperience`、`askQuestion`、`applyAnswer`、`rewriteBullets`）和纯代码规则步骤（`detectGaps`、`pickGap`、`rankCards`、`checkBullet`、`assembleResume`）。缺口状态（Covered / Weak / Unknown / True Gap）、选哪个问题、卡片排序、bullet 事实校验都**必须留在代码里**，不要交给模型判断。
-- **`lib/llm.ts` 的 `callStructured(schema, system, user, effort)`** 是所有 AI 调用的唯一出口：用 Zod schema 做结构化输出并校验；`getMode()` 决定 live / mock。除 `lib/pipeline.ts` 外，质量评估（`lib/evaluation.ts`）、补足经历追问（`lib/experience-discovery.ts`）和岗位页面提取（`lib/job-sources.ts`）也走它。输出不符合 schema、或可选参数 `check` 报错时自动重试，一共最多 3 次（#22）。新增 AI 步骤时，要在 `lib/mock.ts` 里补对应的 mock 分支，否则无 key 时会断。
+- **`lib/llm.ts` 的 `callStructured(schema, system, user, effort)`** 是所有 AI 调用的唯一出口：用 Zod schema 做结构化输出并校验；`getProvider()` 决定走 Anthropic 原生 SDK、OpenAI 兼容接口（`openai` SDK + `LLM_BASE_URL`）还是 mock，`getMode()` 决定 live / mock。OpenAI 兼容接口默认要求 `json_schema` 严格输出，服务商不支持（返回 400）时自动改用 `json_object`，把 schema 写进提示词，再用 Zod 校验。除 `lib/pipeline.ts` 外，质量评估（`lib/evaluation.ts`）、补足经历追问（`lib/experience-discovery.ts`）和岗位页面提取（`lib/job-sources.ts`）也走它。输出不符合 schema、或可选参数 `check` 报错时自动重试，一共最多 3 次（#22）。新增 AI 步骤时，要在 `lib/mock.ts` 里补对应的 mock 分支，否则无 key 时会断。
 - **`lib/schema.ts` 是类型与 Zod schema 的唯一来源**。经历库层级：affiliation → card → field，每个事实带状态（`user_confirmed` / `ai_inferred` / `missing`）和出处。`docs/schema-v1.md` 的合并草案比代码多几个字段，以代码为准，改 schema 前先问用户。
 - **事实 id 贯穿全流程**：匹配和改写必须引用事实 id（`indexFacts` 建索引）；`detectGaps` 丢弃不存在的 id、只认"已确认"的证据；`checkBullet` 拦截无来源、引用未确认事实、或数字不在所引事实里的 bullet。这是"AI 只能扩展表达，不能扩展事实"的落点，改动这几处要格外谨慎。
 - 对话里得到的数字类成果先标"待确认"，用户点确认后才能进简历；JD 针对性追问最多 3 题（前端 `app/page.tsx` 的 `MAX_QUESTIONS` 计数，后端 `question` 步骤里另写死了 `>= 3`，改上限时两处都要改）。

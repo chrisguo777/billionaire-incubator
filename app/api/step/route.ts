@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 import { EVALUATION_VERSION } from "@/lib/evaluation-schema";
 import { evaluateResume } from "@/lib/evaluation";
 import { reviewResume } from "@/lib/review";
-import { getMode, getProvider, isProviderConfigured } from "@/lib/llm";
+import { getMode, getModelName, getProvider, isProviderConfigured } from "@/lib/llm";
 import { isLang } from "@/lib/language";
 import {
   analyzeJD,
@@ -27,7 +27,7 @@ export const maxDuration = 120;
 export const runtime = "nodejs";
 
 export async function GET() {
-  return NextResponse.json({ mode: getMode(), provider: getProvider(), configured: isProviderConfigured(), evaluationVersion: EVALUATION_VERSION });
+  return NextResponse.json({ mode: getMode(), provider: getProvider(), model: getModelName(), configured: isProviderConfigured(), evaluationVersion: EVALUATION_VERSION });
 }
 
 const isBlank = (text: unknown) => typeof text !== "string" || !text.trim();

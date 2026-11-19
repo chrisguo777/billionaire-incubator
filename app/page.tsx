@@ -87,8 +87,10 @@ function Who({ kinds }: { kinds: ("ai" | "rule" | "user")[] }) {
 
 export default function Page() {
   const [mode, setMode] = useState<"live" | "mock" | null>(null);
-  const [provider, setProvider] = useState<"anthropic" | "mock" | null>(null);
+  const [provider, setProvider] = useState<"anthropic" | "openai-compatible" | "mock" | null>(null);
+  const [modelName, setModelName] = useState<string | null>(null);
   const [providerConfigured, setProviderConfigured] = useState(true);
+  const providerLabel = provider === "openai-compatible" ? `OpenAI 兼容接口${modelName ? ` · ${modelName}` : ""}` : `Anthropic API${modelName ? ` · ${modelName}` : ""}`;
   const [cv, setCv] = useState(SAMPLE_CV);
   const [jdText, setJdText] = useState(SAMPLE_JD);
   const [db, setDb] = useState<ExperienceDB | null>(null);
@@ -115,7 +117,7 @@ export default function Page() {
   const [uploadInfo, setUploadInfo] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/step").then((r) => r.json()).then((d) => { setMode(d.mode); setProvider(d.provider); setProviderConfigured(d.configured !== false); }).catch(() => {});
+    fetch("/api/step").then((r) => r.json()).then((d) => { setMode(d.mode); setProvider(d.provider); setModelName(d.model ?? null); setProviderConfigured(d.configured !== false); }).catch(() => {});
   }, []);
 
   const newIds = useMemo(() => new Set(turns.flatMap((t) => t.added_ids)), [turns]);
@@ -438,7 +440,7 @@ export default function Page() {
   return (
     <main>
       <h1>
-        Resume Agent · Demo v0 {mode && <span className={`mode ${!providerConfigured ? "mock" : mode}`}>{mode === "live" ? providerConfigured ? "LIVE · Anthropic API" : "Anthropic API · 待配置密钥" : "MOCK · 使用内置示例逻辑"}</span>}
+        Resume Agent · Demo v0 {mode && <span className={`mode ${!providerConfigured ? "mock" : mode}`}>{mode === "live" ? providerConfigured ? `LIVE · ${providerLabel}` : `${provider === "openai-compatible" ? "OpenAI 兼容接口" : "Anthropic API"} · 待配置` : "MOCK · 使用内置示例逻辑"}</span>}
       </h1>
       <p className="sub">
         CV + JD → 解析 → JD 匹配 → 缺口检测 → 针对性追问 → 选材排序 → 改写 → 定制简历。只有「已确认」的事实才会进入简历。
@@ -478,9 +480,10 @@ export default function Page() {
           <textarea value={jdText} onChange={(e) => setJdText(e.target.value)} aria-label="JD" />
         </div>
         {mode === "mock" && (
-          <p className="note">Mock 模式只认识内置的示例 CV/JD；换成别的文本需要配置 ANTHROPIC_API_KEY（模板见 .env.example）。</p>
+          <p className="note">Mock 模式只认识内置的示例 CV/JD；换成别的文本需要配置模型的 API key（模板见 .env.example）。</p>
         )}
         {provider === "anthropic" && !providerConfigured && <p className="note" role="status">已切换为 Anthropic API。请在项目根目录的 .env.local 中填写 ANTHROPIC_API_KEY，再重启开发服务并刷新页面。</p>}
+        {provider === "openai-compatible" && !providerConfigured && <p className="note" role="status">已切换为 OpenAI 兼容接口。请在项目根目录的 .env.local 中填写 LLM_BASE_URL、LLM_API_KEY 和 LLM_MODEL，再重启开发服务并刷新页面。</p>}
         <div className="row">
           <button onClick={runAnalysis} disabled={!!busy || !!missingInput}>解析并分析</button>
           {busy ? <span className="note">{busy}</span> : missingInput && <span className="note" role="status">{missingInput}</span>}
