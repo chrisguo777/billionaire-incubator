@@ -3,6 +3,10 @@
 按日期记录每次合并进 `main` 的改动。每条写清：新增了什么、修复了什么、验证到什么程度、还剩哪些已知问题。
 每次合并 PR 后，在最上面加一段，并附上 PR 编号。
 
+## 2026-11-18（合并 PR #27：MIT 许可证）
+
+- 新增 `LICENSE`（MIT），版权人写为 Billionaire Incubator contributors（Christine、Paxton、Shera、Ziyue）；README 末尾注明许可证。
+
 ## 2026-11-18（合并 PR #26：AGENTS.md 改为协作结束后的状态）
 
 - `AGENTS.md` 说明团队协作阶段已结束、本仓库是公开的 v1.0 版本；去掉成员代号和"由 Paxton 审阅 / 加 CHANGELOG"的分工规则，改为合并后在本文件加一段并附 PR 编号。

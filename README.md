@@ -64,3 +64,7 @@ Built by a team of four between September and November 2026. Members are listed 
   - Education in parsing and in the generated resume ([#2](https://github.com/chrisguo777/billionaire-incubator/pull/2))
   - Separate settings for the conversation language and the resume language, and a fix for Chinese text appearing in English resumes ([#17](https://github.com/chrisguo777/billionaire-incubator/pull/17))
   - First implementation of resume preview, PDF / Word export and shorter interview questions ([#5](https://github.com/chrisguo777/billionaire-incubator/pull/5); these three parts were merged through #12)
+
+## License
+
+Released under the [MIT License](LICENSE).
