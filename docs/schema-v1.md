@@ -1,6 +1,6 @@
 # Experience Schema v1（三版合并草案）
 
-> 设计草案，与代码不一致时以代码为准（实际类型与 Zod schema 在 `lib/schema.ts`）。
+> 2026 年 10 月的设计草案，保留作历史记录，文中"未经团队确认""待团队确认"的事项不会再更新。与代码不一致时以代码为准（实际类型与 Zod schema 在 `lib/schema.ts`）。
 
 来源：Paxton（问题概述）、Shera（产品框架·经历卡片）、Christine（开发逻辑图解·schema + 7 张表）。仅为讨论稿，未经团队确认。
 
