@@ -20,7 +20,7 @@ The app is a fixed workflow, not an autonomous agent. The code decides every ste
 ## Tech stack
 
 - Next.js 16, React 19, TypeScript
-- Anthropic Claude API through the official SDK; every model call returns structured output validated with Zod, and invalid output is retried
+- Model access behind one function: Claude through the official Anthropic SDK (the default, `claude-opus-5-5`), or any provider with an OpenAI-compatible API (OpenAI, DeepSeek, Doubao, Gemini and others) through the `openai` SDK. Every call returns structured output validated with Zod, and invalid output is retried
 - Stateless backend: all state lives in the browser
 - Word export with `docx`; resume upload from PDF (`unpdf`), Word (`mammoth`) and plain text
 
@@ -31,6 +31,7 @@ This is a working prototype, tested on a small number of resumes.
 - The fact check covers sources, confirmation status and numbers. It does not yet catch an inflated role or scope that adds no new number.
 - Facts extracted from the resume are not yet verified word for word against the original text, and users cannot edit or delete an extracted fact.
 - Output quality has no human-rated baseline yet; the six-dimension score comes from the model.
+- Prompts were tuned on Claude. Other models can be connected, but their output quality has not been evaluated.
 - The interface is in Chinese; the resume itself can be generated in English or Chinese.
 - Nothing is saved: refreshing the page clears the session.
 
