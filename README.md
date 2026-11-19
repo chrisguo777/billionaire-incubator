@@ -33,7 +33,7 @@ This is a working prototype, tested on a small number of resumes.
 - Output quality has no human-rated baseline yet; the six-dimension score comes from the model.
 - Prompts were tuned on Claude. Other models can be connected, but their output quality has not been evaluated.
 - The interface is in Chinese; the resume itself can be generated in English or Chinese.
-- Nothing is saved: refreshing the page clears the session.
+- Progress is kept only in the current browser tab: it survives a refresh but is cleared when the tab closes. There are no accounts, and the experience database cannot be reused across sessions yet.
 
 The full, numbered list of known issues is kept in [CHANGELOG.md](CHANGELOG.md).
 

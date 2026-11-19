@@ -56,6 +56,10 @@ interface FinishResult extends ReviewResult {
   allRewritten?: RewrittenCard[];
 }
 
+const SESSION_KEY = "resume-agent-session";
+// Bump when the saved state's shape changes, so an old tab's data is ignored instead of breaking the page.
+const SESSION_VERSION = 1;
+
 async function call<T>(body: Record<string, unknown>): Promise<T> {
   const res = await fetch("/api/step", {
     method: "POST",
@@ -124,6 +128,11 @@ export default function Page() {
   const cvEmpty = !cv.trim();
   const jdEmpty = !jdText.trim();
   const missingInput = cvEmpty && jdEmpty ? "请先填写简历和 JD" : cvEmpty ? "请先上传或粘贴简历" : jdEmpty ? "请先粘贴 JD" : null;
+  // The CV and JD the current results were built from. Once either input changes, every result
+  // below is out of date: actions on it are locked until the user re-analyzes or restores the text.
+  const [analyzedInputs, setAnalyzedInputs] = useState<{ cv: string; jd: string } | null>(null);
+  const inputsStale = !!db && !!analyzedInputs && (cv !== analyzedInputs.cv || jdText !== analyzedInputs.jd);
+  const locked = !!busy || inputsStale;
 
   async function guard<T>(label: string, fn: () => Promise<T>): Promise<T | undefined> {
     setBusy(label);
@@ -150,12 +159,16 @@ export default function Page() {
       setDiscovery({ exhausted: false });
       setRegularSkipped(false);
       setEditing(null);
-      const p = await call<{ db: ExperienceDB }>({ step: "parse", cv });
-      const j = await call<{ jd: JDAnalysis }>({ step: "jd", jd: jdText });
+      setEvaluation(null);
+      // Inputs are locked while busy, so these are exactly the texts the results are built from.
+      const inputs = { cv, jd: jdText };
+      const p = await call<{ db: ExperienceDB }>({ step: "parse", cv: inputs.cv });
+      const j = await call<{ jd: JDAnalysis }>({ step: "jd", jd: inputs.jd });
       const a = await call<{ gaps: Gap[] }>({ step: "analyze", db: p.db, jd: j.jd, asked: {} });
       setDb(p.db);
       setJd(j.jd);
       setGaps(a.gaps);
+      setAnalyzedInputs(inputs);
     });
   }
 
@@ -380,6 +393,57 @@ export default function Page() {
   const previewHTML = useMemo(() => (preview?.doc ? docToHTML(preview.doc) : ""), [preview]);
   const previewReady = loadedPreview?.html === previewHTML && loadedPreview.onePage === onePage;
 
+  // Keep the session in this tab's sessionStorage so a refresh does not lose it. sessionStorage
+  // is cleared when the tab closes, so the resume does not stay on the computer afterwards.
+  const [restored, setRestored] = useState(false);
+  const savedState = {
+    cv, jdText, db, jd, gaps, asked, turns, pending, interviewDone, answer, chatLanguage, sortMode,
+    selectedCardIds, discovery, regularSkipped, result, choices, reviewed, evaluation, onePage, analyzedInputs, uploadInfo,
+  };
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(SESSION_KEY);
+      const saved = raw ? (JSON.parse(raw) as { version?: number; state?: Partial<typeof savedState> }) : null;
+      if (saved?.version === SESSION_VERSION && saved.state) {
+        const s = saved.state;
+        if (s.cv !== undefined) setCv(s.cv);
+        if (s.jdText !== undefined) setJdText(s.jdText);
+        if (s.db !== undefined) setDb(s.db);
+        if (s.jd !== undefined) setJd(s.jd);
+        if (s.gaps !== undefined) setGaps(s.gaps);
+        if (s.asked !== undefined) setAsked(s.asked);
+        if (s.turns !== undefined) setTurns(s.turns);
+        if (s.pending !== undefined) setPending(s.pending);
+        if (s.interviewDone !== undefined) setInterviewDone(s.interviewDone);
+        if (s.answer !== undefined) setAnswer(s.answer);
+        if (s.chatLanguage !== undefined) setChatLanguage(s.chatLanguage);
+        if (s.sortMode !== undefined) setSortMode(s.sortMode);
+        if (s.selectedCardIds !== undefined) setSelectedCardIds(s.selectedCardIds);
+        if (s.discovery !== undefined) setDiscovery(s.discovery);
+        if (s.regularSkipped !== undefined) setRegularSkipped(s.regularSkipped);
+        if (s.result !== undefined) setResult(s.result);
+        if (s.choices !== undefined) setChoices(s.choices);
+        if (s.reviewed !== undefined) setReviewed(s.reviewed);
+        if (s.evaluation !== undefined) setEvaluation(s.evaluation);
+        if (s.onePage !== undefined) setOnePage(s.onePage);
+        if (s.analyzedInputs !== undefined) setAnalyzedInputs(s.analyzedInputs);
+        if (s.uploadInfo !== undefined) setUploadInfo(s.uploadInfo);
+      }
+    } catch {
+      // Storage blocked or data from an older version: start fresh.
+    }
+    setRestored(true);
+  }, []);
+  const savedJSON = JSON.stringify({ version: SESSION_VERSION, state: savedState });
+  useEffect(() => {
+    if (!restored) return; // never overwrite the saved session before it has been read
+    try {
+      sessionStorage.setItem(SESSION_KEY, savedJSON);
+    } catch {
+      // Storage full or blocked: the page still works, it just will not survive a refresh.
+    }
+  }, [restored, savedJSON]);
+
   async function preparePreview(frame: HTMLIFrameElement) {
     const doc = frame.contentDocument;
     if (!doc?.querySelector(".resume-content")) return;
@@ -476,8 +540,8 @@ export default function Page() {
         </div>
         <JobPicker disabled={!!busy} onUse={setJdText} />
         <div className="grid2">
-          <textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} aria-label="CV" />
-          <textarea value={jdText} onChange={(e) => setJdText(e.target.value)} aria-label="JD" />
+          <textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} aria-label="CV" disabled={!!busy} />
+          <textarea value={jdText} onChange={(e) => setJdText(e.target.value)} aria-label="JD" disabled={!!busy} />
         </div>
         {mode === "mock" && (
           <p className="note">Mock 模式只认识内置的示例 CV/JD；换成别的文本需要配置模型的 API key（模板见 .env.example）。</p>
@@ -488,6 +552,13 @@ export default function Page() {
           <button onClick={runAnalysis} disabled={!!busy || !!missingInput}>解析并分析</button>
           {busy ? <span className="note">{busy}</span> : missingInput && <span className="note" role="status">{missingInput}</span>}
         </div>
+        <p className="note">进度只保存在当前标签页：刷新页面不会丢失，关闭标签页后自动清除。</p>
+        {inputsStale && analyzedInputs && (
+          <div className="err" role="alert">
+            简历或 JD 已经改过，下面的结果还是根据修改前的材料生成的，追问、生成、下载和评估都已暂停。请重新点「解析并分析」；如果是误改，也可以恢复修改前的材料，继续使用现有结果。
+            <div className="row"><button className="ghost" disabled={!!busy} onClick={() => { setCv(analyzedInputs.cv); setJdText(analyzedInputs.jd); setUploadInfo(null); }}>恢复修改前的简历和 JD</button></div>
+          </div>
+        )}
         {error && <div className="err">出错：{error}</div>}
       </section>
 
@@ -500,7 +571,7 @@ export default function Page() {
               简历目标语言{" "}
               <select
                 value={db.resume_language ?? "en"}
-                disabled={!!busy || !!result}
+                disabled={locked || !!result}
                 onChange={(e) => setDb({ ...db, resume_language: e.target.value as Lang })}
               >
                 {LANGS.map((l) => <option key={l} value={l}>{LANG_LABEL[l]}</option>)}
@@ -545,7 +616,7 @@ export default function Page() {
                     {o.note}{o.value !== null ? `：${o.value}${o.unit ? " " + o.unit : ""}` : ""}{" "}
                     <span className={`chip ${o.status}`}>{STATUS_LABEL[o.status]}</span>{" "}
                     {o.status !== "user_confirmed" && (
-                      <button className="small ghost" disabled={!!busy} onClick={() => confirmOutcome(o.id)}>确认这个结果</button>
+                      <button className="small ghost" disabled={locked} onClick={() => confirmOutcome(o.id)}>确认这个结果</button>
                     )}
                   </div>
                 ))}
@@ -581,7 +652,7 @@ export default function Page() {
             </tbody>
           </table>
           {!pending && !interviewDone && turns.length === 0 && (
-            <div className="row"><button onClick={startInterview} disabled={!!busy}>开始针对性追问</button></div>
+            <div className="row"><button onClick={startInterview} disabled={locked}>开始针对性追问</button></div>
           )}
         </section>
       )}
@@ -605,11 +676,11 @@ export default function Page() {
               <div className="q">Q{turns.length + 1}（{pending.kind === "experience" ? "补充经历" : pending.requirement.text}）：{pending.question}</div>
               <textarea className="short" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={chatLanguage === "en" ? "Answer directly; write \"no\" if you have not done it" : "直接回答；没做过就写“没有”"} />
               <div className="row">
-                <button onClick={() => submitAnswer()} disabled={!!busy || !answer.trim()}>提交回答</button>
+                <button onClick={() => submitAnswer()} disabled={locked || !answer.trim()}>提交回答</button>
                 {pending.kind === "experience"
-                  ? <button className="ghost" onClick={continueWithCurrentExperiences} disabled={!!busy}>确实没有其他经历，按现有数量继续</button>
-                  : <button className="ghost" onClick={skipRegularQuestions} disabled={!!busy}>跳过剩余 JD 问题</button>}
-                {pending.kind === "experience" && result && db && countExperiences(db) >= TARGET_EXPERIENCES && <button className="ghost" disabled={!!busy} onClick={restoreExistingExperiences}>恢复全部已有经历</button>}
+                  ? <button className="ghost" onClick={continueWithCurrentExperiences} disabled={locked}>确实没有其他经历，按现有数量继续</button>
+                  : <button className="ghost" onClick={skipRegularQuestions} disabled={locked}>跳过剩余 JD 问题</button>}
+                {pending.kind === "experience" && result && db && countExperiences(db) >= TARGET_EXPERIENCES && <button className="ghost" disabled={locked} onClick={restoreExistingExperiences}>恢复全部已有经历</button>}
                 {busy && <span className="note">{busy}</span>}
               </div>
             </div>
@@ -633,7 +704,7 @@ export default function Page() {
           <p className="note">
             <b>代码规则</b>按 JD 匹配证据给经历排序并提示证据情况；<b>你</b>决定保留哪些经历；<b>AI</b>逐条提出改写建议。未操作时保留原句；只有点「接受这条」且改写通过校验才替换。
           </p>
-          <fieldset className="resume-sort" disabled={!!busy || editing !== null}>
+          <fieldset className="resume-sort" disabled={locked || editing !== null}>
             <legend>最终简历的经历排序</legend>
             {(["relevance", "chronological"] as const).map((value) => <label key={value}>
               <input type="radio" name="resume-sort" value={value} checked={sortMode === value} onChange={() => changeSortMode(value)} /> {SORT_LABELS[value]}
@@ -641,7 +712,7 @@ export default function Page() {
             <p className="note">{sortMode === "relevance" ? "优先展示与目标 JD 更相关的经历。" : "正在进行的经历优先，再按结束、开始时间倒序；日期未知的放最后，同日期按 JD 匹配度排列。项目沿用所属经历的日期。"} 切换排序会保留选择和编辑，不会重新调用 AI。经历是否保留由你决定。</p>
           </fieldset>
           <div className="row">
-            <button onClick={finish} disabled={!!busy}>生成简历</button>
+            <button onClick={finish} disabled={locked}>生成简历</button>
             {busy && <span className="note">{busy}</span>}
           </div>
           {result && (
@@ -658,7 +729,7 @@ export default function Page() {
                       <td>{r.score}</td>
                       <td>{(() => { const card = db?.cards.find((c) => c.id === r.card_id); const aff = db?.affiliations.find((a) => a.id === card?.affiliation_id); return [aff?.start_date, aff?.end_date].filter(Boolean).join(" – ") || "日期未知"; })()}</td>
                       <td><span className={`chip ${r.evidence_status === "supported" ? "covered" : r.evidence_status === "insufficient" ? "weak" : "unknown"}`}>{CARD_EVIDENCE_LABELS[r.evidence_status] ?? "待重新生成"}</span></td>
-                      <td><label><input type="checkbox" aria-label={`保留经历：${cardName(r.card_id)}`} checked={r.included} disabled={!!busy || editing !== null} onChange={(e) => changeCardSelection(r.card_id, e.target.checked)} /> 保留</label></td>
+                      <td><label><input type="checkbox" aria-label={`保留经历：${cardName(r.card_id)}`} checked={r.included} disabled={locked || editing !== null} onChange={(e) => changeCardSelection(r.card_id, e.target.checked)} /> 保留</label></td>
                       <td className="note">{r.reasons.join("；")}</td>
                     </tr>
                   ))}
@@ -697,17 +768,17 @@ export default function Page() {
                           <div className="review-panel">
                             <h4>改写建议 · {b.text !== original.text ? "你的修改稿" : original.has_suggestion === false ? "暂保留原句" : "AI 建议稿"}</h4>
                             {editing === key ? <>
-                              <textarea className="short" aria-label={`编辑 ${cardName(rc.card_id)} 第 ${i + 1} 条`} value={editText} onChange={(e) => setEditText(e.target.value)} disabled={!!busy} />
-                              <div className="row"><button disabled={!!busy || !editText.trim()} onClick={() => reviewBullet(key, editText, "pending")}>保存并重新校验</button><button className="ghost" disabled={!!busy} onClick={() => setEditing(null)}>取消</button></div>
+                              <textarea className="short" aria-label={`编辑 ${cardName(rc.card_id)} 第 ${i + 1} 条`} value={editText} onChange={(e) => setEditText(e.target.value)} disabled={locked} />
+                              <div className="row"><button disabled={locked || !editText.trim()} onClick={() => reviewBullet(key, editText, "pending")}>保存并重新校验</button><button className="ghost" disabled={locked} onClick={() => setEditing(null)}>取消</button></div>
                             </> : <p className="bullet-text">{b.text}</p>}
                             {b.text !== original.text && <details><summary>查看 AI 原建议</summary><p>{original.text}</p></details>}
                             <p className={`note ${!b.ok ? "err" : ""}`}>{b.ok ? "来源与数字规则校验通过" : b.issues.join("；")}</p>
                             <p className="note">{status === "excluded" ? "本条已从最终简历排除。" : status === "accepted" && b.ok ? "最终简历使用这条改写稿。" : sourceBullet ? "最终简历保留左侧原句。编辑保存后仍需点「接受这条」才替换。" : "本条尚未加入最终简历。"}</p>
                             <div className="row">
-                              <button disabled={!!busy || !b.ok || editing !== null || status === "accepted"} onClick={() => reviewBullet(key, b.text, "accepted")}>接受这条</button>
-                              <button className="ghost" disabled={!!busy || editing !== null} onClick={() => { setEditing(key); setEditText(b.text); }}>编辑</button>
-                              <button className="ghost" disabled={!!busy || editing !== null || status === "excluded"} onClick={() => reviewBullet(key, b.text, "excluded")}>排除这条</button>
-                              {status !== "pending" && <button className="ghost" disabled={!!busy || editing !== null} onClick={() => reviewBullet(key, b.text, "pending")}>撤回选择</button>}
+                              <button disabled={locked || !b.ok || editing !== null || status === "accepted"} onClick={() => reviewBullet(key, b.text, "accepted")}>接受这条</button>
+                              <button className="ghost" disabled={locked || editing !== null} onClick={() => { setEditing(key); setEditText(b.text); }}>编辑</button>
+                              <button className="ghost" disabled={locked || editing !== null || status === "excluded"} onClick={() => reviewBullet(key, b.text, "excluded")}>排除这条</button>
+                              {status !== "pending" && <button className="ghost" disabled={locked || editing !== null} onClick={() => reviewBullet(key, b.text, "pending")}>撤回选择</button>}
                             </div>
                           </div>
                         </div>
@@ -720,12 +791,12 @@ export default function Page() {
               <h2 style={{ marginTop: 16 }}>{experienceTargetMet ? "最终简历" : "简历预览 · 待补足经历"} · 预览与下载</h2>
               {!experienceTargetMet && <div className="warn" role="status">
                 <p>当前预览有 {previewExperienceCount} 段经历，目标至少 {TARGET_EXPERIENCES} 段。已记录的新增经历需要先在上方接受描述才会加入；也可以恢复被排除的原句。确实没有其他可保留经历时，可按现有数量继续。</p>
-                <button className="ghost" disabled={!!busy || editing !== null} onClick={continueWithCurrentExperiences}>没有其他可保留经历，按现有数量继续</button>
+                <button className="ghost" disabled={locked || editing !== null} onClick={continueWithCurrentExperiences}>没有其他可保留经历，按现有数量继续</button>
               </div>}
               <p className="note">当前简历保留 {retainedCount} 条原句，使用 {acceptedCount} 条已接受的改写或新增描述。未操作的原句会保留。</p>
               <p className="note">当前排序：{SORT_LABELS[sortMode]}</p>
               <p className="note">下面的预览和导出的 PDF 是同一份排版，排序、保留和已接受的改写都会同步。点「下载 PDF」会打开打印窗口，在目标打印机里选择「存储为 PDF」即可保存；「下载 Word」直接下载 .docx 文件，可以继续在 Word 里修改。</p>
-              <fieldset className="resume-sort" disabled={!!busy || needsOriginals}>
+              <fieldset className="resume-sort" disabled={locked || needsOriginals}>
                 <legend>简历页数</legend>
                 <label>
                   <input type="radio" name="resume-pagination" checked={onePage} onChange={() => { setLoadedPreview(null); setOnePage(true); }} />
@@ -751,8 +822,8 @@ export default function Page() {
                 />
               )}
               <div className="row">
-                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null || !previewReady} onClick={downloadPDF}>下载 PDF</button>
-                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null || !previewReady} onClick={downloadWord}>下载 Word</button>
+                <button disabled={locked || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null || !previewReady} onClick={downloadPDF}>下载 PDF</button>
+                <button disabled={locked || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null || !previewReady} onClick={downloadWord}>下载 Word</button>
               </div>
               <details>
                 <summary>查看 Markdown 原文</summary>
@@ -765,13 +836,13 @@ export default function Page() {
                 <ul className="warn">{preview?.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
               )}
               <div className="row">
-                <button className="ghost" disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={() => preview && navigator.clipboard.writeText(preview.markdown)}>复制 Markdown</button>
+                <button className="ghost" disabled={locked || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={() => preview && navigator.clipboard.writeText(preview.markdown)}>复制 Markdown</button>
               </div>
               <div className="evaluation-section">
                 <h2>简历质量评估 <Who kinds={["ai", "rule"]} /></h2>
                 <p className="note">对比原简历与当前预览稿（保留的原句及已接受的改写），按六个维度评估，并核验引用能否在原文中找到。每项 0–3 分，无法判断时不评分。建议仍需你审阅，评估不会自动修改简历。</p>
                 <p className="note">这是文字内容评估，不包含版式、PDF 解析测试或 ATS 通过率预测。LIVE 模式点击后调用一次模型，使用你的 API 额度。</p>
-                <button disabled={!!busy || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={runEvaluation}>{currentEvaluation ? "重新评估" : "评估当前简历"}</button>
+                <button disabled={locked || needsOriginals || experienceBulletCount === 0 || !experienceTargetMet || editing !== null} onClick={runEvaluation}>{currentEvaluation ? "重新评估" : "评估当前简历"}</button>
                 {busy === "正在评估简历质量…" && <p role="status">正在评估简历质量…</p>}
                 {evaluation && !currentEvaluation && <p className="note">简历或审阅内容已变化，请重新评估。</p>}
                 {currentEvaluation && <>
