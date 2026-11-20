@@ -60,7 +60,7 @@ export function applyDiscoveryExtraction(db: ExperienceDB, state: ExperienceDisc
   for (const fact of extraction.facts) {
     if (!fact.text.trim() || card[fact.field].some((f) => normalize(f.text) === normalize(fact.text))) continue;
     const factId = id("f");
-    card[fact.field].push({ id: factId, text: fact.text.trim(), status: "user_confirmed", source: "dialogue" }); added_ids.push(factId);
+    card[fact.field].push({ id: factId, text: fact.text.trim(), status: "ai_inferred", source: "dialogue" }); added_ids.push(factId);
   }
   for (const outcome of extraction.outcomes) {
     if (!outcome.note.trim() || card.outcomes.some((o) => o.note === outcome.note && o.value === outcome.value && o.unit === outcome.unit && o.basis === outcome.basis)) continue;

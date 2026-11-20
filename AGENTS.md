@@ -39,6 +39,19 @@ node tests/bullet-review.cjs   # tests/ 下的回归脚本逐个手动运行（�
 - Next.js 版本较新，与训练数据可能不一致；写 Next 相关代码前先读 `node_modules/next/dist/docs/`。本文件末尾的 nextjs-agent-rules 块由 `next dev` 自动生成和维护，保留即可，不要手动改。
 - 路径别名 `@/` 指向仓库根目录（如 `@/lib/pipeline`）。
 
+## 经历库人工核对（当前开发分支）
+
+- 用户流程已拆成解析 → 人工核对 → JD 分析与匹配；详细行为、文件清单和验证见 `docs/experience-review.md`。
+- API 的 parse 返回待核对事实；确认表示本人认可，不表示外部核实。追问文字事实及成果也需要主动确认。
+- 编辑 / 删除事实会暂停该经历的旧原句保留，避免旧内容回流；之后的新建议要逐条接受。不要将空的 `original_bullets` 当成需要从旧 CV 补回。
+- 页面会话版本现为 3，兼容读取版本 2（新增追问轮次起点默认 0），更早会话需重新解析。
+
+## 教育资格与追问隔离（当前开发分支）
+
+- 用户确认的教育列表显式传入匹配和问题上下文。教育要求由 `lib/education-match.ts` 单独核对，只显示匹配、风险或人工核实，不进入经历追问。
+- 选择器排除教育要求；问题输出检查阻止常见教育追问；旧教育回答请求返回 409。不要用教育问题补问学历，也不要从工作机构推断用户学校。
+- 规则、文件映射与验证边界见 `docs/education-matching.md`。
+
 ## 架构要点
 
 这是一个**固定流程的 workflow，不是自主 agent**：控制流在代码里，模型只负责理解和生成。需要同时读几个文件才能看清的部分：
@@ -49,7 +62,7 @@ node tests/bullet-review.cjs   # tests/ 下的回归脚本逐个手动运行（�
 - **`lib/llm.ts` 的 `callStructured(schema, system, user, effort)`** 是所有 AI 调用的唯一出口：用 Zod schema 做结构化输出并校验；`getProvider()` 决定走 Anthropic 原生 SDK、OpenAI 兼容接口（`openai` SDK + `LLM_BASE_URL`）还是 mock，`getMode()` 决定 live / mock。OpenAI 兼容接口默认要求 `json_schema` 严格输出，服务商不支持（返回 400）时自动改用 `json_object`，把 schema 写进提示词，再用 Zod 校验。除 `lib/pipeline.ts` 外，质量评估（`lib/evaluation.ts`）、补足经历追问（`lib/experience-discovery.ts`）和岗位页面提取（`lib/job-sources.ts`）也走它。输出不符合 schema、或可选参数 `check` 报错时自动重试，一共最多 3 次（#22）。新增 AI 步骤时，要在 `lib/mock.ts` 里补对应的 mock 分支，否则无 key 时会断。
 - **`lib/schema.ts` 是类型与 Zod schema 的唯一来源**。经历库层级：affiliation → card → field，每个事实带状态（`user_confirmed` / `ai_inferred` / `missing`）和出处。`docs/schema-v1.md` 的合并草案比代码多几个字段，以代码为准，改 schema 前先问用户。
 - **事实 id 贯穿全流程**：匹配和改写必须引用事实 id（`indexFacts` 建索引）；`detectGaps` 丢弃不存在的 id、只认"已确认"的证据；`checkBullet` 拦截无来源、引用未确认事实、或数字不在所引事实里的 bullet。这是"AI 只能扩展表达，不能扩展事实"的落点，改动这几处要格外谨慎。
-- 对话里得到的数字类成果先标"待确认"，用户点确认后才能进简历；JD 针对性追问最多 3 题（前端 `app/page.tsx` 的 `MAX_QUESTIONS` 计数，后端 `question` 步骤里另写死了 `>= 3`，改上限时两处都要改）。
+- 对话里得到的文字事实及成果先标"待确认"，用户点确认后才能进简历；每轮 JD 针对性追问最多 3 题，结束后可主动重新开始一轮（保留此前回答）（前端 `app/page.tsx` 的 `MAX_QUESTIONS` 计数，后端 `question` 步骤里另写死了 `>= 3`，改上限时两处都要改）。
 - 「补足三段经历」追问已实现但暂时关闭：`lib/experience-target.ts` 的 `TARGET_EXPERIENCES = 0`（原为 3）。这类追问不占 3 题名额；是否重开尚未决定。
 
 ## 分支与合并

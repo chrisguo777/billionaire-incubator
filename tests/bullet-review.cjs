@@ -13,8 +13,8 @@ registerHooks({ resolve(specifier, context, next) {
 process.env.LLM_MODE = 'mock';
 
 (async () => {
-  const { extractOriginalBullets } = await import('../lib/original-bullets.ts');
-  const { normalizeRewrites, checkBullet, parseCV, analyzeJD, matchExperience, detectGaps, rankCards, rewriteBullets } = await import('../lib/pipeline.ts');
+  const { extractOriginalBullets, repairOriginalBoundaries } = await import('../lib/original-bullets.ts');
+  const { normalizeRewrites, checkBullet, ensureOriginalBullets, parseCV, analyzeJD, matchExperience, detectGaps, rankCards, rewriteBullets } = await import('../lib/pipeline.ts');
   const { reviewResume } = await import('../lib/review.ts');
   const { bulletKey, needsBulletReview } = await import('../lib/review-types.ts');
   const { reviewableCards } = await import('../lib/review-display.ts');
@@ -44,6 +44,23 @@ process.env.LLM_MODE = 'mock';
     assert.equal(extractOriginalBullets('-12% change in an observed metric.')[0].text, '-12% change in an observed metric.');
     assert.equal(extractOriginalBullets('2024. Analysis project.')[0].text, '2024. Analysis project.');
   });
+  const trailingHeader = 'Example International Students Advisory Board Aug 2025 – Present\nStudent Engagement Coordinator, Example University Atlanta, GA';
+  const finalResearchBullet = 'Communicated findings through 10+ presentations and written reports with data\nvisualizations for a multidisciplinary research team.';
+  test('split employer/date and position/location headings do not enter the previous bullet', () => {
+    const source = `▪ ${finalResearchBullet}\n${trailingHeader}\n▪ Connected newcomers with experienced students.`;
+    const blocks = extractOriginalBullets(source);
+    assert.equal(blocks[0].text, finalResearchBullet);
+    assert.equal(blocks.at(-1).text, 'Connected newcomers with experienced students.');
+    assert.equal(blocks.length, 4);
+    assert(!blocks[0].text.includes('Coordinator'));
+    const indented = extractOriginalBullets(source.replace('Example International', '  Example International').replace('Student Engagement Coordinator', '  Student Engagement Coordinator'));
+    assert.equal(indented[0].text, finalResearchBullet);
+  });
+  test('ordinary dated/action continuations remain intact and project section ends a bullet', () => {
+    const wrapped = 'Developed models with a research assistant from Jan 2025 – Aug 2025\nand reported findings to project leadership.';
+    assert.equal(extractOriginalBullets('▪ '+wrapped)[0].text, wrapped);
+    assert.equal(extractOriginalBullets('▪ Wrote a report.\nPROJECT EXPERIENCE\nExample Project')[0].text, 'Wrote a report.');
+  });
   const fact = (id, text, source = 'cv_parse', status = 'user_confirmed') => ({ id, text, source, status });
   const makeCard = (id, affiliation_id, originals) => ({ id, affiliation_id, name: id, my_role: null,
     context: [], my_actions: [fact('f-' + id, 'Cleaned survey responses using Python')],
@@ -67,6 +84,28 @@ process.env.LLM_MODE = 'mock';
     { card_id: 'c1', bullets: [proposal('b1', 'Second duplicate model card.', ['f-c1'])] },
     { card_id: 'c2', bullets: [proposal('b1', 'Duplicate card proposal.')] },
   ] };
+  test('cached mixed original is repaired immutably with stable IDs and no cross-experience export', () => {
+    const cached = structuredClone(db);
+    cached.cards[0].original_bullets[0].text = finalResearchBullet + '\n' + trailingHeader;
+    const snapshot = JSON.stringify(cached);
+    const fixed = repairOriginalBoundaries(cached);
+    assert.equal(fixed.cards[0].original_bullets[0].id, cached.cards[0].original_bullets[0].id);
+    assert.equal(fixed.cards[0].original_bullets[0].text, finalResearchBullet);
+    assert.deepEqual(fixed.cards[0].my_actions, cached.cards[0].my_actions);
+    assert.equal(fixed.cards[1], cached.cards[1]);
+    assert.equal(JSON.stringify(cached), snapshot);
+    assert.equal(repairOriginalBoundaries(fixed), fixed);
+    const reviewed = reviewResume(cached, jd, gaps, [], {});
+    assert(!reviewed.resume.markdown.includes('Example International Students Advisory Board'));
+    assert(reviewed.resume.markdown.includes(finalResearchBullet.replace(/\s+/g, ' ')));
+    assert(!checkBullet(cached, cached.cards[0].original_bullets[0].text, [cached.cards[0].original_bullets[0].id], cached.cards[0].id).ok);
+    const ambiguous = structuredClone(cached);
+    ambiguous.cards[0].original_bullets[0].text += '\nUnmarked work that might belong to the next experience.';
+    assert.throws(() => repairOriginalBoundaries(ambiguous), /无法安全恢复/);
+  });
+  const cachedForFinish = structuredClone(db);
+  cachedForFinish.cards[0].original_bullets[0].text = finalResearchBullet + '\n' + trailingHeader;
+  assert.equal((await ensureOriginalBullets(cachedForFinish)).cards[0].original_bullets[0].text, finalResearchBullet);
   const rows = normalizeRewrites(db, ['c1', 'c2', 'c3'], output);
   const key = bulletKey('c1', 0, 'b1');
   const review = (choices = {}, sort = 'relevance') => reviewResume(db, jd, gaps, rows, choices, sort);

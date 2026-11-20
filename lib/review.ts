@@ -1,6 +1,6 @@
 import { orderResumeCards, type ResumeSortMode } from "./resume-order";
 import { assembleResume, checkBullet, normalizeRewrites, rankCards, type RewrittenCard } from "./pipeline";
-import { findOriginal, normalizedBullet } from "./original-bullets";
+import { findOriginal, repairOriginalBoundaries, normalizedBullet } from "./original-bullets";
 import { selectResumeCards } from "./resume-selection";
 import type { ExperienceDB, Gap, JDAnalysis } from "./schema";
 
@@ -8,6 +8,7 @@ import { bulletKey, needsBulletReview, type ReviewChoices } from "./review-types
 
 // Recheck user edits with the same rules as generated bullets; never trust client ok flags.
 export function reviewResume(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[], original: RewrittenCard[], choices: ReviewChoices, sortMode: ResumeSortMode = "relevance", selectedCardIds?: readonly string[]) {
+  db = repairOriginalBoundaries(db);
   const ranked = selectResumeCards(rankCards(db, jd, gaps), selectedCardIds);
   const normalized = normalizeRewrites(db, ranked.filter((r) => r.included).map((r) => r.card_id), { cards: original });
   const rewritten = normalized.map((card) => ({

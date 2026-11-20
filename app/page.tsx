@@ -14,6 +14,11 @@ import { FACT_FIELDS } from "@/lib/schema";
 import type { Asked, ExperienceDB, Gap, GapStatus, JDAnalysis, Requirement } from "@/lib/schema";
 import type { RankedCard, ResumeOutput, RewrittenCard } from "@/lib/pipeline";
 import { docToHTML, fitResumeToOnePage, resumeFileName } from "@/lib/resume-doc";
+import ExperienceReview, { ResumeDetailsReview } from "./components/experience-review";
+import { repairOriginalBoundaries } from "@/lib/original-bullets";
+import { confirmFacts, reviewFacts } from "@/lib/fact-review";
+import { checkEducation, educationGap, isEducationQuestion, isEducationRequirement } from "@/lib/education-match";
+import EducationNotice from "./components/education-notice";
 import ScoreComparison from "./components/score-comparison";
 import JobPicker from "./job-picker";
 
@@ -25,7 +30,7 @@ const GAP_LABEL: Record<GapStatus, string> = {
   unknown: "未知 Unknown",
   true_gap: "真缺口 True Gap",
 };
-const STATUS_LABEL = { user_confirmed: "已确认", ai_inferred: "待确认", missing: "缺失" } as const;
+const STATUS_LABEL = { user_confirmed: "本人已确认", ai_inferred: "尚未核对", missing: "缺失" } as const;
 const FIELD_LABEL: Record<string, string> = {
   context: "背景",
   my_actions: "我的动作",
@@ -58,7 +63,7 @@ interface FinishResult extends ReviewResult {
 
 const SESSION_KEY = "resume-agent-session";
 // Bump when the saved state's shape changes, so an old tab's data is ignored instead of breaking the page.
-const SESSION_VERSION = 1;
+const SESSION_VERSION = 3;
 
 async function call<T>(body: Record<string, unknown>): Promise<T> {
   const res = await fetch("/api/step", {
@@ -97,11 +102,16 @@ export default function Page() {
   const providerLabel = provider === "openai-compatible" ? `OpenAI 兼容接口${modelName ? ` · ${modelName}` : ""}` : `Anthropic API${modelName ? ` · ${modelName}` : ""}`;
   const [cv, setCv] = useState(SAMPLE_CV);
   const [jdText, setJdText] = useState(SAMPLE_JD);
+  const [reviewPane, setReviewPane] = useState<"source" | "fields">("fields");
+  const [newEntryDraft, setNewEntryDraft] = useState(false);
+  const [reviewEditing, setReviewEditing] = useState(0);
+  const [detailsConfirmed, setDetailsConfirmed] = useState(false);
   const [db, setDb] = useState<ExperienceDB | null>(null);
   const [jd, setJd] = useState<JDAnalysis | null>(null);
   const [gaps, setGaps] = useState<Gap[]>([]);
   const [asked, setAsked] = useState<Asked>({});
   const [turns, setTurns] = useState<Turn[]>([]);
+  const [roundStart, setRoundStart] = useState(0);
   const [pending, setPending] = useState<Pending | null>(null);
   const [interviewDone, setInterviewDone] = useState(false);
   const [answer, setAnswer] = useState("");
@@ -133,6 +143,34 @@ export default function Page() {
   const [analyzedInputs, setAnalyzedInputs] = useState<{ cv: string; jd: string } | null>(null);
   const inputsStale = !!db && !!analyzedInputs && (cv !== analyzedInputs.cv || jdText !== analyzedInputs.jd);
   const locked = !!busy || inputsStale;
+  const educationChecks = useMemo(() => db && jd ? jd.requirements.flatMap((r) => {
+    const check = checkEducation(r, db.education ?? []); return check ? [check] : [];
+  }) : [], [db, jd]);
+  const matchingGaps = useMemo(() => !db || !jd ? gaps : gaps.map((g) => {
+    const r = jd.requirements.find((r) => r.id === g.requirement_id);
+    return r ? educationGap(db, r) ?? g : g;
+  }), [db, jd, gaps]);
+  // Also retire a previously saved/generated education question without resetting
+  // the user's reviewed DB, edits, accepted bullets or whole browser session.
+  useEffect(() => {
+    if (pending?.kind === "gap" && (isEducationRequirement(pending.requirement) || isEducationQuestion(pending.question))) {
+      setPending(null); setAnswer(""); setInterviewDone(false);
+    }
+  }, [pending]);
+
+  useEffect(() => {
+    if (!db) return;
+    try {
+      const repaired = repairOriginalBoundaries(db);
+      if (repaired !== db) {
+        setDb(repaired); setResult(null); setReviewed(null); setEvaluation(null);
+        setError("已修复原句中混入的下一段经历标题；核对与追问记录已保留，请重新生成简历。");
+      }
+    } catch (err) {
+      setResult(null); setReviewed(null); setEvaluation(null);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [db]);
 
   async function guard<T>(label: string, fn: () => Promise<T>): Promise<T | undefined> {
     setBusy(label);
@@ -147,8 +185,15 @@ export default function Page() {
   }
 
   async function runAnalysis() {
-    await guard("解析简历和 JD…", async () => {
+    await guard("解析简历，准备核对…", async () => {
+      setNewEntryDraft(false);
+      setReviewEditing(0);
+      setDetailsConfirmed(false);
+      setJd(null);
+      setDb(null);
+      setGaps([]);
       setTurns([]);
+      setRoundStart(0);
       setAsked({});
       setPending(null);
       setInterviewDone(false);
@@ -163,11 +208,7 @@ export default function Page() {
       // Inputs are locked while busy, so these are exactly the texts the results are built from.
       const inputs = { cv, jd: jdText };
       const p = await call<{ db: ExperienceDB }>({ step: "parse", cv: inputs.cv });
-      const j = await call<{ jd: JDAnalysis }>({ step: "jd", jd: inputs.jd });
-      const a = await call<{ gaps: Gap[] }>({ step: "analyze", db: p.db, jd: j.jd, asked: {} });
       setDb(p.db);
-      setJd(j.jd);
-      setGaps(a.gaps);
       setAnalyzedInputs(inputs);
     });
   }
@@ -192,6 +233,7 @@ export default function Page() {
     history: { question: string; answer: string }[] = [],
     currentDiscovery = discovery,
     currentSelection = selectedCardIds,
+    currentRoundStart = roundStart,
   ) {
     if (!jd) {
       setPending(null);
@@ -207,6 +249,8 @@ export default function Page() {
       asked: currentAsked,
       history,
       regularQuestionCount: count,
+      roundStart: currentRoundStart,
+      retryInterview: currentRoundStart > 0,
       chatLanguage,
       discovery: currentDiscovery,
       selectedCardIds: currentSelection ?? undefined,
@@ -264,13 +308,29 @@ export default function Page() {
       setGaps(r.gaps);
       setAnswer("");
       setBusy("生成下一条追问…");
-      await nextQuestion(r.db, r.gaps, r.asked, regularSkipped ? MAX_QUESTIONS : nextTurns.filter((t) => t.kind !== "experience").length, nextTurns, nextDiscovery, nextSelection);
+      await nextQuestion(r.db, r.gaps, r.asked, regularSkipped ? MAX_QUESTIONS : nextTurns.slice(roundStart).filter((t) => t.kind !== "experience" && (!t.requirement || !isEducationRequirement(t.requirement))).length, nextTurns, nextDiscovery, nextSelection);
     });
   }
 
   async function retryNextQuestion() {
     if (!db || !jd || pending || interviewDone) return;
-    await guard("生成下一条追问…", () => nextQuestion(db, gaps, asked, regularSkipped ? MAX_QUESTIONS : turns.filter((t) => t.kind !== "experience").length, turns));
+    await guard("生成下一条追问…", () => nextQuestion(db, gaps, asked, regularSkipped ? MAX_QUESTIONS : turns.slice(roundStart).filter((t) => t.kind !== "experience" && (!t.requirement || !isEducationRequirement(t.requirement))).length, turns));
+  }
+
+  async function restartInterview() {
+    if (!db || !jd || pending) return;
+    await guard("换一组针对性追问…", async () => {
+      // Only reset the round limit. Keep answers, facts, explicit 'none' and exports.
+      try {
+        await nextQuestion(db, gaps, asked, 0, turns, discovery, selectedCardIds, turns.length);
+      } catch (err) {
+        setInterviewDone(true);
+        throw err;
+      }
+      setRoundStart(turns.length);
+      setRegularSkipped(false);
+      setAnswer("");
+    });
   }
 
   async function skipRegularQuestions() {
@@ -303,19 +363,42 @@ export default function Page() {
     });
   }
 
-  async function confirmOutcome(outcomeId: string) {
-    if (!db || !jd) return;
-    const next = structuredClone(db);
-    for (const c of next.cards) for (const o of c.outcomes) if (o.id === outcomeId) o.status = "user_confirmed";
-    await guard("更新匹配…", async () => {
-      const a = await call<{ gaps: Gap[] }>({ step: "analyze", db: next, jd, asked });
-      setDb(next);
-      setGaps(a.gaps);
+  function reopenReview() {
+    setReviewEditing(0); setError(null);
+    setJd(null); setGaps([]); setResult(null); setReviewed(null); setChoices({});
+    setEvaluation(null); setPending(null); setInterviewDone(false); setEditing(null); setAnswer("");
+    setSelectedCardIds(null); setDetailsConfirmed(false);
+  }
+
+  function updateReviewedDB(next: ExperienceDB) {
+    setDb(next); setDetailsConfirmed(false);
+  }
+
+  async function continueAfterReview() {
+    if (!db || newEntryDraft || reviewEditing > 0 || !detailsConfirmed || reviewFacts(db).some((f) => f.status !== "user_confirmed") || inputsStale) return;
+    await guard("根据核对后的经历库分析 JD 和匹配…", async () => {
+      const j = await call<{ jd: JDAnalysis }>({ step: "jd", jd: jdText });
+      const a = await call<{ gaps: Gap[] }>({ step: "analyze", db, jd: j.jd, asked });
+      setJd(j.jd); setGaps(a.gaps);
     });
+  }
+
+  async function confirmInterviewFacts(ids: string[]) {
+    if (!db || !jd || locked) return;
+    const next = confirmFacts(db, ids);
+    // Keep the interview, but discard generated material based on the older DB.
+    setDb(next); setResult(null); setReviewed(null); setChoices({}); setEvaluation(null);
+    const updated = await guard("用已确认的信息更新匹配…", async () => {
+      const a = await call<{ gaps: Gap[] }>({ step: "analyze", db: next, jd, asked });
+      setGaps(a.gaps);
+      return true;
+    });
+    if (!updated) { setJd(null); setGaps([]); setDetailsConfirmed(false); }
   }
 
   async function finish() {
     if (!db || !jd) return;
+    if (reviewFacts(db).some((f) => f.status !== "user_confirmed")) { setError("还有待确认信息，请在生成按钮上方逐条核对并确认后再生成。"); return; }
     if (needsExperienceDiscovery(db, discovery, selectedCardIds ?? undefined)) {
       await guard("准备补充经历追问…", () => nextQuestion(db, gaps, asked, MAX_QUESTIONS, turns));
       return;
@@ -398,21 +481,35 @@ export default function Page() {
   const [restored, setRestored] = useState(false);
   const savedState = {
     cv, jdText, db, jd, gaps, asked, turns, pending, interviewDone, answer, chatLanguage, sortMode,
-    selectedCardIds, discovery, regularSkipped, result, choices, reviewed, evaluation, onePage, analyzedInputs, uploadInfo,
+    selectedCardIds, discovery, regularSkipped, roundStart, result, choices, reviewed, evaluation, onePage, analyzedInputs, uploadInfo, detailsConfirmed,
   };
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(SESSION_KEY);
       const saved = raw ? (JSON.parse(raw) as { version?: number; state?: Partial<typeof savedState> }) : null;
-      if (saved?.version === SESSION_VERSION && saved.state) {
+      if ((saved?.version === SESSION_VERSION || saved?.version === 2) && saved.state) {
         const s = saved.state;
         if (s.cv !== undefined) setCv(s.cv);
         if (s.jdText !== undefined) setJdText(s.jdText);
-        if (s.db !== undefined) setDb(s.db);
+        if (s.detailsConfirmed !== undefined) setDetailsConfirmed(s.detailsConfirmed);
+        if (s.db !== undefined) {
+          let repaired = s.db;
+          try { repaired = s.db ? repairOriginalBoundaries(s.db) : s.db; }
+          catch (err) {
+            s.result = null; s.reviewed = null; s.evaluation = null;
+            setError(err instanceof Error ? err.message : String(err));
+          }
+          setDb(repaired);
+          if (repaired !== s.db) {
+            // Existing preview HTML and proposals may contain stale source text.
+            s.result = null; s.reviewed = null; s.evaluation = null;
+          }
+        }
         if (s.jd !== undefined) setJd(s.jd);
         if (s.gaps !== undefined) setGaps(s.gaps);
         if (s.asked !== undefined) setAsked(s.asked);
         if (s.turns !== undefined) setTurns(s.turns);
+        if (s.roundStart !== undefined) setRoundStart(Math.max(0, Math.min(s.roundStart, s.turns?.length ?? 0)));
         if (s.pending !== undefined) setPending(s.pending);
         if (s.interviewDone !== undefined) setInterviewDone(s.interviewDone);
         if (s.answer !== undefined) setAnswer(s.answer);
@@ -499,6 +596,7 @@ export default function Page() {
   }
 
   const reqText = (id: string) => jd?.requirements.find((r) => r.id === id)?.text ?? id;
+  const unconfirmedCount = db ? reviewFacts(db).filter(f => f.status !== "user_confirmed").length : 0;
   const cardName = (id: string) => db?.cards.find((c) => c.id === id)?.name ?? id;
 
   return (
@@ -512,7 +610,7 @@ export default function Page() {
 
       <section className="card">
         <h2>1. 输入：简历 CV 与目标 JD <Who kinds={["user"]} /></h2>
-        <p className="note">你提供原材料。上传文件的文字提取由代码完成，不用 AI。点「解析并分析」后，AI 会依次完成第 2、3 步。</p>
+        <p className="note">你提供原材料。上传文件的文字提取由代码完成，不用 AI。点「解析简历，开始核对」后，先检查第 2 步的解析结果；确认后才进入 JD 分析与匹配。</p>
         <div className="row" style={{ marginTop: 0, marginBottom: 10 }}>
           <label className="upload">
             上传简历（PDF / Word / TXT）
@@ -540,8 +638,8 @@ export default function Page() {
         </div>
         <JobPicker disabled={!!busy} onUse={setJdText} />
         <div className="grid2">
-          <textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} aria-label="CV" disabled={!!busy} />
-          <textarea value={jdText} onChange={(e) => setJdText(e.target.value)} aria-label="JD" disabled={!!busy} />
+          <label className="input-field"><span>您的简历：</span><textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} disabled={!!busy} /></label>
+          <label className="input-field"><span>您的JD：</span><textarea value={jdText} onChange={(e) => setJdText(e.target.value)} disabled={!!busy} /></label>
         </div>
         {mode === "mock" && (
           <p className="note">Mock 模式只认识内置的示例 CV/JD；换成别的文本需要配置模型的 API key（模板见 .env.example）。</p>
@@ -549,13 +647,13 @@ export default function Page() {
         {provider === "anthropic" && !providerConfigured && <p className="note" role="status">已切换为 Anthropic API。请在项目根目录的 .env.local 中填写 ANTHROPIC_API_KEY，再重启开发服务并刷新页面。</p>}
         {provider === "openai-compatible" && !providerConfigured && <p className="note" role="status">已切换为 OpenAI 兼容接口。请在项目根目录的 .env.local 中填写 LLM_BASE_URL、LLM_API_KEY 和 LLM_MODEL，再重启开发服务并刷新页面。</p>}
         <div className="row">
-          <button onClick={runAnalysis} disabled={!!busy || !!missingInput}>解析并分析</button>
+          <button onClick={runAnalysis} disabled={!!busy || !!missingInput}>解析简历，开始核对</button>
           {busy ? <span className="note">{busy}</span> : missingInput && <span className="note" role="status">{missingInput}</span>}
         </div>
         <p className="note">进度只保存在当前标签页：刷新页面不会丢失，关闭标签页后自动清除。</p>
         {inputsStale && analyzedInputs && (
           <div className="err" role="alert">
-            简历或 JD 已经改过，下面的结果还是根据修改前的材料生成的，追问、生成、下载和评估都已暂停。请重新点「解析并分析」；如果是误改，也可以恢复修改前的材料，继续使用现有结果。
+            简历或 JD 已经改过，下面的结果还是根据修改前的材料生成的，追问、生成、下载和评估都已暂停。请重新点「解析简历，开始核对」；如果是误改，也可以恢复修改前的材料，继续使用现有结果。
             <div className="row"><button className="ghost" disabled={!!busy} onClick={() => { setCv(analyzedInputs.cv); setJdText(analyzedInputs.jd); setUploadInfo(null); }}>恢复修改前的简历和 JD</button></div>
           </div>
         )}
@@ -563,9 +661,23 @@ export default function Page() {
       </section>
 
       {db && (
-        <section className="card">
-          <h2>2. 简历解析 → 经历库 Experience DB <Who kinds={["ai", "rule"]} /></h2>
-          <p className="note">AI 把简历拆成「经历 → 卡片 → 格子」，只能照搬原文、不许添加；代码给每条事实打上状态和出处。CV 里的内容视为「已确认」（你自己写的）；对话中得到的数字先标「待确认」，需要你点确认才算数。</p>
+        <section className="card review-workspace">
+          <h2>2. 简历解析 → 经历库 Experience DB <Who kinds={["ai", "user"]} /></h2>
+          <p className="note">这里展示 AI 对材料的理解，不等于你已经确认。请对照原文核对每条信息：来源和核对状态分别显示，确认只代表本人认可，不代表系统核实了真实性。</p>
+          <div className="review-mobile-switch" role="group" aria-label="核对视图">
+            <button className="small ghost" aria-pressed={reviewPane === "source"} onClick={() => setReviewPane("source")}>查看原文</button>
+            <button className="small ghost" aria-pressed={reviewPane === "fields"} onClick={() => setReviewPane("fields")}>核对与修改</button>
+          </div>
+          <div className={`review-columns review-show-${reviewPane}`}>
+            <aside className="review-source-panel" aria-labelledby="review-source-title">
+              <div className="review-panel-heading"><div><span className="review-step-label">对照材料</span><h3 id="review-source-title">原简历文字</h3></div><span className="chip">只读</span></div>
+              <p className="note">本次解析使用的完整文字。右侧修改不会改变这份原文。</p>
+              <pre className="source-cv" tabIndex={0} aria-label="本次解析的原简历文字">{analyzedInputs?.cv ?? cv}</pre>
+            </aside>
+            <div className="review-fields-panel" role="region" aria-labelledby="review-fields-title" tabIndex={0}>
+              <div className="review-panel-heading"><div><span className="review-step-label">逐项核对</span><h3 id="review-fields-title">解析结果与修改</h3></div><span className="chip">你来确认</span></div>
+          {jd ? <div className="row"><button className="ghost" disabled={locked} onClick={reopenReview}>重新核对经历库（清除后续结果）</button><span className="note">修改前先返回核对；追问中新增的信息也在这里确认。</span></div> : <ResumeDetailsReview db={db} disabled={locked || reviewEditing > 0} onChange={updateReviewedDB} onDraftChange={setNewEntryDraft} />}
+
           <div className="row" style={{ marginTop: 0 }}>
             <label>
               简历目标语言{" "}
@@ -579,11 +691,11 @@ export default function Page() {
             </label>
             <span className="note">
               {result
-                ? "简历已生成，目标语言不能再改；需要换语言请重新点「解析并分析」。"
+                ? "简历已生成，目标语言不能再改；需要换语言请重新点「解析简历，开始核对」。"
                 : "根据上传的简历自动识别。回答追问时记录的事实、改写的 bullet 和最终简历都统一用这个语言；识别不对可以在这里改。"}
             </span>
           </div>
-          {(db.education ?? []).map((e) => (
+          {jd && (db.education ?? []).map((e) => (
             <div className="cardbox" key={e.id}>
               <h3>{e.school} <span className="chip">{e.id}</span></h3>
               <div className="org">
@@ -597,32 +709,16 @@ export default function Page() {
               ))}
             </div>
           ))}
-          {db.cards.map((c) => {
-            const aff = db.affiliations.find((a) => a.id === c.affiliation_id);
-            return (
-              <div className="cardbox" key={c.id}>
-                <h3>{c.name} <span className="chip">{c.id}</span></h3>
-                <div className="org">{[aff?.title, aff?.organization].filter(Boolean).join(" · ")} · {aff?.type}</div>
-                {FACT_FIELDS.flatMap((f) =>
-                  c[f].map((x) => (
-                    <div className={`fact ${newIds.has(x.id) ? "new" : ""}`} key={x.id}>
-                      <span className="f">{FIELD_LABEL[f]}</span>{x.text} <span className={`chip ${x.status}`}>{STATUS_LABEL[x.status]}</span>
-                    </div>
-                  )),
-                )}
-                {c.outcomes.map((o) => (
-                  <div className={`fact ${newIds.has(o.id) ? "new" : ""}`} key={o.id}>
-                    <span className="f">{FIELD_LABEL.outcomes}</span>
-                    {o.note}{o.value !== null ? `：${o.value}${o.unit ? " " + o.unit : ""}` : ""}{" "}
-                    <span className={`chip ${o.status}`}>{STATUS_LABEL[o.status]}</span>{" "}
-                    {o.status !== "user_confirmed" && (
-                      <button className="small ghost" disabled={locked} onClick={() => confirmOutcome(o.id)}>确认这个结果</button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            );
-          })}
+          <ExperienceReview db={db} disabled={locked} readOnly={!!jd} onChange={updateReviewedDB} onConfirm={confirmInterviewFacts} onEditing={(active) => setReviewEditing((n) => n + (active ? 1 : -1))} />
+          {!jd && <div className="review-continue">
+            {newEntryDraft && <p className="note" role="status">请先保存或取消新增内容，再继续。</p>}
+            <label><input type="checkbox" checked={detailsConfirmed} disabled={locked} onChange={(e) => setDetailsConfirmed(e.target.checked)} /> 我已对照原文核对姓名、联系方式、教育经历、单位、职位和日期</label>
+            <div className="row"><button disabled={locked || newEntryDraft || reviewEditing > 0 || !detailsConfirmed || reviewFacts(db).some((f) => f.status !== "user_confirmed")} onClick={continueAfterReview}>核对完成，继续 JD 分析与匹配</button></div>
+            <p className="note">请先确认或删除全部事实，再继续。修改或删除事实后，该经历的旧原句不再自动保留；后续新建议需要逐条接受。</p>
+          </div>}
+
+            </div>
+          </div>
         </section>
       )}
 
@@ -634,16 +730,17 @@ export default function Page() {
             <b>代码规则</b>再据此判定状态，不让 AI 拍板：已覆盖＝有你本人的动作和已确认的结果；偏弱＝有证据但缺动作或结果；未知＝没找到证据，值得问；真缺口＝你被问过并回答没有。
           </p>
           <p className="note">{jd.role_title} · {jd.domain} · {jd.seniority}</p>
+          <EducationNotice checks={educationChecks} education={db?.education ?? []} />
           <table>
             <thead><tr><th>要求</th><th>优先级</th><th>状态</th><th>原因</th><th>证据</th></tr></thead>
             <tbody>
-              {gaps.map((g) => {
+              {matchingGaps.map((g) => {
                 const r = jd.requirements.find((x) => x.id === g.requirement_id)!;
                 return (
                   <tr key={g.requirement_id}>
                     <td>{r.text}</td>
                     <td>{r.priority}</td>
-                    <td><span className={`chip ${g.status}`}>{GAP_LABEL[g.status]}</span></td>
+                    <td><span className={`chip ${g.status}`}>{isEducationRequirement(r) ? g.status === "covered" ? "教育条件已匹配" : g.status === "true_gap" ? "教育要求风险" : "教育资格待核实" : GAP_LABEL[g.status]}</span></td>
                     <td>{g.reason}</td>
                     <td className="note">{g.evidence_fact_ids.join(", ") || "—"}</td>
                   </tr>
@@ -657,23 +754,36 @@ export default function Page() {
         </section>
       )}
 
-      {(turns.length > 0 || pending || interviewDone) && (
+      {jd && (turns.length > 0 || pending || interviewDone) && (
         <section className="card">
           <h2>4. 针对性追问{TARGET_EXPERIENCES > 0 ? "与补充经历" : ""} <Who kinds={["rule", "ai", "user"]} /></h2>
           <p className="note">
             <b>代码规则</b>挑下一个最值得问的缺口（按优先级）；<b>AI</b>把它说成一句话，并把你的回答整理成事实；<b>你</b>回答，没做过就写「没有」。
-            回答后会回到第 3 步重新匹配，缺口状态随之更新。JD 针对性追问最多 {MAX_QUESTIONS} 题。{TARGET_EXPERIENCES > 0 && `不足 ${TARGET_EXPERIENCES} 段时，另行追问课程、小组作业或其他相关经历。确实没有就按现有数量继续，不为凑数编造经历。`}
+            回答后会回到第 3 步重新匹配，缺口状态随之更新。每轮 JD 针对性追问最多 {MAX_QUESTIONS} 题，结束后可换一组问题。{TARGET_EXPERIENCES > 0 && `不足 ${TARGET_EXPERIENCES} 段时，另行追问课程、小组作业或其他相关经历。确实没有就按现有数量继续，不为凑数编造经历。`}
           </p>
-          {turns.map((t, i) => (
+          {roundStart > 0 && <>
+            <details><summary>查看此前的追问与回答（{roundStart} 条）</summary>
+              {turns.slice(0, roundStart).map((t, i) => <div className="qa" key={i}>
+                {t.requirement && <div className="question-context"><b>对应的 JD 要求（解析结果）</b><p>{t.requirement.text}</p></div>}
+                <div className="q">历史问答 {i + 1}：<span className="question-text">{t.question}</span></div>
+                <div className="a">{t.answer}</div>
+              </div>)}
+            </details>
+            <h3>新一轮针对性追问</h3>
+            <p className="note">本轮从 Q1 开始，最多 3 题。此前已记录的信息继续保留。</p>
+          </>}
+          {turns.slice(roundStart).map((t, i) => (
             <div className="qa" key={i}>
-              <div className="q">Q{i + 1}（{t.kind === "experience" ? "补充经历" : t.requirement?.text}）：{t.question}</div>
+              {t.kind !== "experience" && t.requirement && <div className="question-context"><b>对应的 JD 要求（解析结果）</b><p>{t.requirement.text}</p></div>}
+              <div className="q">Q{i + 1}{t.kind === "experience" ? "（补充经历）" : ""}：<span className="question-text">{t.question}</span></div>
               <div className="a">{t.answer}</div>
               <div className="note">{t.kind === "experience" ? t.note : t.has_experience ? `已记录 ${t.added_ids.length} 条新事实，上表蓝底高亮` : "你确认没有相关经历 → 该要求记为真缺口"}</div>
             </div>
           ))}
           {pending && (
             <div className="qa">
-              <div className="q">Q{turns.length + 1}（{pending.kind === "experience" ? "补充经历" : pending.requirement.text}）：{pending.question}</div>
+              {pending.kind === "gap" && <div className="question-context"><b>对应的 JD 要求（解析结果）</b><p>{pending.requirement.text}</p><p><b>目前的证据情况：</b>{pending.gap.reason}</p><p className="note">这里说明的是已确认信息是否充分，不代表你没有这项能力。请按实际情况回答，没有相关经历也可以直接说明。</p></div>}
+              <div className="q">Q{turns.length - roundStart + 1}{pending.kind === "experience" ? "（补充经历）" : ""}：<span className="question-text">{pending.question}</span></div>
               <textarea className="short" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={chatLanguage === "en" ? "Answer directly; write \"no\" if you have not done it" : "直接回答；没做过就写“没有”"} />
               <div className="row">
                 <button onClick={() => submitAnswer()} disabled={locked || !answer.trim()}>提交回答</button>
@@ -687,14 +797,15 @@ export default function Page() {
           )}
           {!pending && !interviewDone && turns.length > 0 && (
             busy ? <p className="note" role="status">正在准备下一条追问，请稍候…</p> : <>
-              <p className="err" role="alert">{error ?? "下一条追问暂未加载，请重试。"}</p>
+              {error ? <p className="err" role="alert">{error}</p> : <p className="note">可以继续获取下一条追问；经历库核对后的修改会用于新的匹配和问题。</p>}
               <div className="row">
                 <button onClick={retryNextQuestion}>重试获取下一题</button>
                 <button className="ghost" onClick={skipRegularQuestions}>跳过剩余 JD 问题</button>
               </div>
             </>
           )}
-          {interviewDone && <p className="note">追问结束。{discovery.exhausted && recordedExperienceCount < TARGET_EXPERIENCES ? `你已确认没有其他经历，将按现有 ${recordedExperienceCount} 段继续，不强制三段。` : ""}</p>}
+          {interviewDone && <p className="note">本轮追问结束。{discovery.exhausted && recordedExperienceCount < TARGET_EXPERIENCES ? `你已确认没有其他经历，将按现有 ${recordedExperienceCount} 段继续，不强制三段。` : ""}</p>}
+          {interviewDone && !pending && <div className="row"><button className="ghost" onClick={restartInterview} disabled={locked}>重新开始针对性追问环节</button><span className="note">换一组问题，每轮最多 3 题。保留此前回答与确认信息；没有更多适合的问题时会直接结束。</span></div>}
         </section>
       )}
 
@@ -702,7 +813,7 @@ export default function Page() {
         <section className="card">
           <h2>5. 选材排序 · 改写 · 生成简历 <Who kinds={["rule", "ai", "rule"]} /></h2>
           <p className="note">
-            <b>代码规则</b>按 JD 匹配证据给经历排序并提示证据情况；<b>你</b>决定保留哪些经历；<b>AI</b>逐条提出改写建议。未操作时保留原句；只有点「接受这条」且改写通过校验才替换。
+            <b>代码规则</b>按 JD 匹配证据给经历排序并提示证据情况；<b>你</b>决定保留哪些经历；<b>AI</b>逐条提出改写建议。未修改经历库的经历保留原句；核对时修改过事实的经历需要接受新建议后才加入。只有点「接受这条」且改写通过校验才替换。
           </p>
           <fieldset className="resume-sort" disabled={locked || editing !== null}>
             <legend>最终简历的经历排序</legend>
@@ -711,10 +822,26 @@ export default function Page() {
             </label>)}
             <p className="note">{sortMode === "relevance" ? "优先展示与目标 JD 更相关的经历。" : "正在进行的经历优先，再按结束、开始时间倒序；日期未知的放最后，同日期按 JD 匹配度排列。项目沿用所属经历的日期。"} 切换排序会保留选择和编辑，不会重新调用 AI。经历是否保留由你决定。</p>
           </fieldset>
+          {db && unconfirmedCount > 0 && <div className="question-context" role="region" aria-label="生成前待确认信息">
+            <h3>还有 {unconfirmedCount} 条信息需要你确认</h3>
+            <p>追问回答由 AI 整理后仍需本人核对，确认完成才能生成简历。请核对以下内容；不准确时可返回第 2 步修改或删除。</p>
+            {db.cards.map(card => {
+              const facts = reviewFacts({ ...db, cards: [card] }).filter(f => f.status !== "user_confirmed");
+              return facts.length > 0 && <div key={card.id}>
+                <h4>{card.name}</h4>
+                {facts.map(f => <div className="qa" key={f.id}>
+                  <p>{"text" in f ? f.text : [f.note, f.value != null ? `${f.value} ${f.unit ?? ""}` : null, f.basis].filter(Boolean).join(" · ")}</p>
+                  <button className="small ghost" disabled={locked} onClick={() => confirmInterviewFacts([f.id])}>我已核对，确认这条信息</button>
+                </div>)}
+              </div>;
+            })}
+          </div>}
+          {inputsStale && <p className="err" role="alert">简历或 JD 输入已变更，请先重新解析或恢复原文，再生成简历。</p>}
           <div className="row">
-            <button onClick={finish} disabled={locked}>生成简历</button>
-            {busy && <span className="note">{busy}</span>}
+            <button onClick={finish} disabled={locked || unconfirmedCount > 0}>生成简历</button>
+            {busy && <span className="note" role="status">{busy}</span>}
           </div>
+          {error && unconfirmedCount === 0 && <p className="err" role="alert">{error}</p>}
           {result && (
             <>
               <h2 style={{ marginTop: 16 }}>经历排序与保留</h2>
@@ -738,7 +865,7 @@ export default function Page() {
 
               <h2 style={{ marginTop: 16 }}>改写对照与逐条审阅</h2>
               {needsOriginals ? <p className="note" role="status">当前结果来自旧版，请点「生成简历」补齐完整原句，已有追问记录会保留。</p> : <p className="note" role="status">共 {totalBullets} 条，其中改动或新增建议 {reviewableBulletCount} 条；已接受 {acceptedCount} 条，保留原句 {retainedCount} 条，已排除 {reviewed?.stats?.excluded ?? 0} 条。未选择时保留原句，接受后才替换；排除会删除整条。</p>}
-              <p className="note">这里只列出有改动或新增的建议；未改动的 bullet 自动保留，不需要接受或排除。左侧显示原简历的完整 bullet（包含续行和分句）。追问补充的新增建议需接受后才加入。数字会按来源逐项检查单位、指标、归属和限制说明；对应关系无法确认时拦截改写并保留原句。规则检查不等于外部事实核实，请同时核实职责与个人贡献。</p>
+              <p className="note">这里只列出有改动或新增的建议；未改动的 bullet 自动保留，不需要接受或排除。左侧显示原简历的完整 bullet（包含续行和分句）。追问补充或经历库核对后重新生成的新增建议需接受后才加入。数字会按来源逐项检查单位、指标、归属和限制说明；对应关系无法确认时拦截改写并保留原句。规则检查不等于外部事实核实，请同时核实职责与个人贡献。</p>
               {!needsOriginals && reviewableBulletCount === 0 && <p className="note" role="status">当前没有需要审阅的改动。未改动的原句会保留在下方简历中。</p>}
               {(!needsOriginals ? reviewCards : []).map((rc) => (
                 <div className="cardbox" key={rc.card_id}>
@@ -754,7 +881,7 @@ export default function Page() {
                         <div className="grid2">
                           <div className="review-panel">
                             <h4>改写前 · 原简历整条 bullet</h4>
-                            {sourceBullet ? <p className="bullet-text">{sourceBullet.text}</p> : <p className="note">追问补充的新增内容，原简历中没有对应原句；未接受时不会加入简历。</p>}
+                            {sourceBullet ? <p className="bullet-text">{sourceBullet.text}</p> : <p className="note">这条是追问补充或经历库核对后重新生成的建议，没有可直接保留的原句；未接受时不会加入简历。</p>}
                             <details><summary>查看支持改写的来源事实</summary>
                             {original.source_ids.filter((id) => id !== original.original_bullet_id).map((id) => {
                               const fact = sources.get(id);

@@ -231,7 +231,7 @@ export function mockRewrite(db: ExperienceDB, cardIds: string[]): RewriteOutput 
       const bullets = [
         ...(card.original_bullets ?? []).map((b) => ({ original_bullet_id: b.id,
           text: b.text.replace(/^Built /, "Developed ").replace(/^Wrote /, "Authored "), source_ids: [b.id] })),
-        ...card.my_actions.filter((a) => a.status === "user_confirmed" && a.source === "dialogue")
+        ...card.my_actions.filter((a) => a.status === "user_confirmed" && (a.source === "dialogue" || !card.original_bullets?.length))
           .map((a) => ({ original_bullet_id: null, text: a.text, source_ids: [a.id] })),
       ];
       return [{ card_id: card.id, bullets }];

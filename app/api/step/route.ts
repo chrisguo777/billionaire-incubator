@@ -1,6 +1,9 @@
+import { pickRetryGap } from "@/lib/interview-round";
 import { isResumeSortMode, orderResumeCards } from "@/lib/resume-order";
 import { selectResumeCards } from "@/lib/resume-selection";
 import { toUserFacingError } from "@/lib/errors";
+import { beginFactReview, reviewFacts } from "@/lib/fact-review";
+import { isEducationRequirement } from "@/lib/education-match";
 import { discoveryState, experienceQuestion, needsExperienceDiscovery, TARGET_EXPERIENCES } from "@/lib/experience-target";
 import { applyDiscoveryAnswer } from "@/lib/experience-discovery";
 import { NextResponse } from "next/server";
@@ -41,12 +44,18 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const mode = getMode();
+    if (body.db && ["analyze", "question", "answer", "finish", "review", "evaluate"].includes(body.step)) {
+      const pending = reviewFacts(body.db).filter((f) => f.status !== "user_confirmed");
+      if (pending.some((f) => f.source !== "dialogue") || (body.step === "finish" && pending.length)) {
+        return NextResponse.json({ error: "经历库有尚未核对的信息，请先返回第 2 步确认、修改或删除，再继续。", code: "FACT_REVIEW_REQUIRED" }, { status: 409 });
+      }
+    }
     const sortMode = body.sortMode ?? "relevance";
     if (!isResumeSortMode(sortMode)) return NextResponse.json({ error: "排序方式无效，请选择 JD 匹配度或经历时间" }, { status: 400 });
     switch (body.step) {
       case "parse": {
         if (isBlank(body.cv)) return NextResponse.json({ error: "简历内容为空，请先上传或粘贴简历文字" }, { status: 400 });
-        return NextResponse.json({ mode, db: await parseCV(body.cv) });
+        return NextResponse.json({ mode, db: beginFactReview(await parseCV(body.cv)) });
       }
       case "jd": {
         if (isBlank(body.jd)) return NextResponse.json({ error: "JD 内容为空，请先粘贴岗位描述，或用岗位链接读取" }, { status: 400 });
@@ -62,10 +71,13 @@ export async function POST(req: Request) {
         if (body.regularQuestionCount >= 3) return NextResponse.json({ mode, done: true });
         const gaps: Gap[] = body.gaps;
         const jd: JDAnalysis = body.jd;
-        const gap = pickGap(gaps, jd, body.asked ?? {});
+        const history = Array.isArray(body.history) ? body.history : [];
+        const roundStart = Number.isInteger(body.roundStart) ? Math.max(0, Math.min(body.roundStart, history.length)) : 0;
+        const retry = body.retryInterview === true && roundStart > 0;
+        const gap = retry ? pickRetryGap(gaps, jd, body.asked ?? {}, history, roundStart) : pickGap(gaps, jd, body.asked ?? {});
         if (!gap) return NextResponse.json({ mode, done: true });
         const requirement = jd.requirements.find((r) => r.id === gap.requirement_id)!;
-        const question = await askQuestion(body.db, gap, requirement, body.history ?? [], isLang(body.chatLanguage) ? body.chatLanguage : "zh");
+        const question = await askQuestion(body.db, gap, requirement, history, isLang(body.chatLanguage) ? body.chatLanguage : "zh", retry);
         return NextResponse.json({ mode, kind: "gap", gap, requirement, question });
       }
       case "answer": {
@@ -76,6 +88,7 @@ export async function POST(req: Request) {
         }
         const jd: JDAnalysis = body.jd;
         const requirement = jd.requirements.find((r) => r.id === body.gap.requirement_id)!;
+        if (requirement && isEducationRequirement(requirement)) return NextResponse.json({ error: "教育信息请在第 2 步核对；教育要求只显示资格提示，不通过追问更新。", code: "EDUCATION_NOT_INTERVIEWED" }, { status: 409 });
         const applied = await applyAnswer(body.db, body.gap, requirement, body.question, body.answer, body.asked ?? {});
         const { matches, gaps } = await analyze(applied.db, jd, applied.asked);
         return NextResponse.json({ mode, ...applied, matches, gaps });

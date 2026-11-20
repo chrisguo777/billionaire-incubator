@@ -11,11 +11,12 @@ Most AI resume tools take a resume and a job description and return a rewrite. T
 The app is a fixed workflow, not an autonomous agent. The code decides every step; the model only reads and writes text.
 
 1. **Parse the resume** into an experience database. Each experience becomes a card, and each card holds facts in fields such as personal actions, team actions, tools, scale and outcomes. Every fact gets an ID, a status (confirmed, pending or missing) and a source.
-2. **Analyze the job description** into separate requirements, each with a priority.
-3. **Match and find gaps.** For each requirement the model must cite the fact IDs that support it. Code rules, not the model, then mark the requirement as Covered, Weak, Unknown or True Gap.
-4. **Ask targeted questions.** Code picks the most valuable gap and the model words a short question, up to three per job. Answers become new facts; any number from the conversation stays "pending" until the user confirms it.
-5. **Rewrite bullets.** Each suggested bullet must list the facts it relies on. A code check blocks bullets with no source, bullets citing unconfirmed facts, and numbers that do not appear in the cited facts. The user accepts, edits or rejects each bullet; untouched bullets keep the original wording.
-6. **Export and evaluate.** The resume is previewed in the browser and exported to Word or PDF. A separate model call scores the original and the revised resume on six dimensions, and code checks that every quote it uses exists in the text.
+2. **Review the parsed facts.** Source and confirmation are shown separately. The user checks, edits or deletes the extracted information before it can be used for matching. See [the review workflow](docs/experience-review.md) for the treatment of corrected experiences.
+3. **Analyze the job description** into separate requirements, each with a priority.
+4. **Match and find gaps.** For each requirement the model must cite the fact IDs that support it. Code rules, not the model, then mark the requirement as Covered, Weak, Unknown or True Gap.
+5. **Ask targeted questions.** Code picks the most valuable gap and the model words a short question, up to three per job. Answers become draft facts and remain pending until the user confirms them.
+6. **Rewrite bullets.** Each suggested bullet must list the facts it relies on. A code check blocks bullets with no source, bullets citing unconfirmed facts, and numbers that do not appear in the cited facts. The user accepts, edits or rejects each bullet; untouched bullets keep the original wording.
+7. **Export and evaluate.** The resume is previewed in the browser and exported to Word or PDF. A separate model call scores the original and the revised resume on six dimensions, and code checks that every quote it uses exists in the text.
 
 ## Tech stack
 
@@ -29,7 +30,7 @@ The app is a fixed workflow, not an autonomous agent. The code decides every ste
 This is a working prototype, tested on a small number of resumes.
 
 - The fact check covers sources, confirmation status and numbers. It does not yet catch an inflated role or scope that adds no new number.
-- Facts extracted from the resume are not yet verified word for word against the original text, and users cannot edit or delete an extracted fact.
+- Facts extracted from the resume are not verified word for word against the original text. Users now review, edit or delete them; their confirmation is not independent verification.
 - Output quality has no human-rated baseline yet; the six-dimension score comes from the model.
 - Prompts were tuned on Claude. Other models can be connected, but their output quality has not been evaluated.
 - The interface is in Chinese; the resume itself can be generated in English or Chinese.
