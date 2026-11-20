@@ -15,7 +15,7 @@ export function reviewResume(db: ExperienceDB, jd: JDAnalysis, gaps: Gap[], orig
     bullets: card.bullets.map((bullet, index) => {
       const choice = choices[bulletKey(card.card_id, index, bullet.original_bullet_id, bullet.source_ids)];
       const text = (choice?.text ?? bullet.text).trim();
-      const checked = checkBullet(db, text, bullet.source_ids);
+      const checked = checkBullet(db, text, bullet.source_ids, card.card_id);
       if (!text) { checked.ok = false; checked.issues.push("内容不能为空"); }
       return { ...bullet, text, ...checked };
     }),
