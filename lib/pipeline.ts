@@ -3,6 +3,7 @@ import { docToMarkdown, type ResumeDoc, type ResumeEntry, type ResumeSection } f
 import type { CardEvidenceStatus } from "./resume-selection";
 import { extractOriginalBullets, normalizedBullet, renderOriginalBullets, uniqueOriginals } from "./original-bullets";
 import { needsBulletReview } from "./review-types";
+import { checkNumericEvidence, type NumericSource } from "./numeric-evidence";
 import { SAMPLE_CV } from "./sample";
 import { detectLanguage, isForeign, LANG_PROMPT_NAME, resumeTitle, SECTION_HEADINGS, type Lang } from "./language";
 import { callStructured, getMode } from "./llm";
@@ -520,33 +521,36 @@ export interface RewrittenCard {
   bullets: CheckedBullet[];
 }
 
-const NUM = /\d+(?:[.,]\d+)?/g;
-
 function sourceText(l: Located): string {
   return l.kind === "fact" ? l.fact.text : `${l.outcome.note} ${l.outcome.value ?? ""} ${l.outcome.unit ?? ""}`;
 }
 
-export function checkBullet(db: ExperienceDB, text: string, sourceIds: string[]): { ok: boolean; issues: string[] } {
+export function checkBullet(db: ExperienceDB, text: string, sourceIds: string[], cardId?: string): { ok: boolean; issues: string[] } {
   const index = indexFacts(db);
   const issues: string[] = [];
   if (!sourceIds.length) issues.push("没有标注事实来源");
-  let allowed = "";
+  const sources: NumericSource[] = [];
   for (const id of sourceIds) {
-    const original = db.cards.flatMap((c) => c.original_bullets ?? []).find((b) => b.id === id);
-    if (original) { allowed += " " + original.text; continue; }
+    const owner = db.cards.find((c) => (!cardId || c.id === cardId) && c.original_bullets?.some((b) => b.id === id));
+    const original = owner?.original_bullets?.find((b) => b.id === id);
+    if (original && owner) { sources.push({ id, text: original.text, cardId: owner.id }); continue; }
+    if (cardId && db.cards.some((c) => c.id !== cardId && c.original_bullets?.some((b) => b.id === id))) {
+      issues.push(`原句 ${id} 属于其他经历，不能借用其数字或成果`); continue;
+    }
     const l = index.get(id);
     if (!l) {
       issues.push(`引用了不存在的事实 ${id}`);
       continue;
     }
     const status = l.kind === "fact" ? l.fact.status : l.outcome.status;
-    if (status !== "user_confirmed") issues.push(`引用了未确认的事实 ${id}`);
-    allowed += " " + sourceText(l);
+    if (status !== "user_confirmed") { issues.push(`引用了未确认的事实 ${id}`); continue; }
+    if (cardId && l.card.id !== cardId) { issues.push(`事实 ${id} 属于其他经历，不能借用其数字或成果`); continue; }
+    sources.push({ id, text: sourceText(l), cardId:l.card.id,
+      team:l.kind === "fact" && l.field === "team_actions",
+      basis:l.kind === "outcome" ? l.outcome.basis : null });
   }
-  const allowedNums = new Set((allowed.match(NUM) ?? []).map((n) => n.replace(/,/g, "")));
-  for (const n of text.match(NUM) ?? []) {
-    if (!allowedNums.has(n.replace(/,/g, ""))) issues.push(`数字 ${n} 不在所引用的已确认事实中`);
-  }
+  if (!cardId && new Set(sources.map(source=>source.cardId)).size > 1) issues.push("来源跨越多段经历，无法确认数字和成果的归属");
+  issues.push(...checkNumericEvidence(text, sources));
   return { ok: issues.length === 0, issues };
 }
 
@@ -559,7 +563,7 @@ export function normalizeRewrites(db: ExperienceDB, cardIds: string[], output: {
     const proposals = output.cards.filter((c) => c.card_id === card.id).flatMap((c) => c.bullets);
     const bullets: CheckedBullet[] = (originals.get(card.id) ?? []).map((original) => {
       const matches = proposals.filter((b) => b.original_bullet_id === original.id && b.text.trim());
-      let proposal: (typeof matches)[number] | undefined = matches.find((b) => checkBullet(db, b.text, [...b.source_ids, original.id]).ok) ?? matches[0];
+      let proposal: (typeof matches)[number] | undefined = matches.find((b) => checkBullet(db, b.text, [...b.source_ids, original.id], card.id).ok) ?? matches[0];
       const suggestionKey = `${card.affiliation_id}:${normalizedBullet(proposal?.text ?? original.text)}`;
       if (seenSuggestions.has(suggestionKey)) proposal = undefined;
       seenSuggestions.add(`${card.affiliation_id}:${normalizedBullet(proposal?.text ?? original.text)}`);
@@ -567,7 +571,7 @@ export function normalizeRewrites(db: ExperienceDB, cardIds: string[], output: {
       const text = proposal?.text ?? original.text;
       return { text, source_ids, original_bullet_id: original.id,
         has_suggestion: needsBulletReview(original.text, text),
-        ...checkBullet(db, text, source_ids) };
+        ...checkBullet(db, text, source_ids, card.id) };
     });
     const seenText = new Set(bullets.map((b) => normalizedBullet(b.text)));
     const seenSources = new Set<string>();
@@ -585,7 +589,7 @@ export function normalizeRewrites(db: ExperienceDB, cardIds: string[], output: {
       const textKey = normalizedBullet(proposal.text);
       if (seenSources.has(sourceKey) || seenText.has(textKey)) continue;
       seenSources.add(sourceKey); seenText.add(textKey);
-      bullets.push({ ...proposal, source_ids: ids, original_bullet_id: null, has_suggestion: true, ...checkBullet(db, proposal.text, ids) });
+      bullets.push({ ...proposal, source_ids: ids, original_bullet_id: null, has_suggestion: true, ...checkBullet(db, proposal.text, ids, card.id) });
     }
     return { card_id: card.id, bullets };
   });
@@ -617,6 +621,7 @@ export async function rewriteBullets(
           `Write every bullet in ${LANG_PROMPT_NAME[resumeLang(db)]}, the language of the user's resume. Original bullets are already in this language; keep it. Some facts were recorded from an interview in another language: translate them faithfully, without adding detail or strengthening the wording.`,
           "Prefer a clear action + what + method/tool + result only when the source supports it. If no improvement is needed, keep the original text.",
           "Hard rules: never add facts, tools, numbers, scope or ownership that are not in the cited facts. Do not turn team actions into personal actions. Every bullet must list source_ids (the fact/outcome ids it relies on).",
+          "For each number preserve its metric/object, unit, change direction, comparison basis, ownership and limitations (approximate, unverified, classroom/synthetic data). Never borrow a matching number from an unrelated fact or convert a count into a percentage. Keep numerical noun phrases close to the source so they can be checked; uncertain numbers must not be presented as verified business results.",
           "You may cite the original bullet ID itself. A new bullet with original_bullet_id=null is allowed ONLY for new confirmed dialogue facts that do not repeat an original bullet. Never create separate extra bullets from CV fact fragments.",
           "Prefer wording that reflects the job's requirements only where it is truthful for the candidate.",
         ].join("\n"),

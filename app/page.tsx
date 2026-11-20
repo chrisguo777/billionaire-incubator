@@ -738,7 +738,7 @@ export default function Page() {
 
               <h2 style={{ marginTop: 16 }}>改写对照与逐条审阅</h2>
               {needsOriginals ? <p className="note" role="status">当前结果来自旧版，请点「生成简历」补齐完整原句，已有追问记录会保留。</p> : <p className="note" role="status">共 {totalBullets} 条，其中改动或新增建议 {reviewableBulletCount} 条；已接受 {acceptedCount} 条，保留原句 {retainedCount} 条，已排除 {reviewed?.stats?.excluded ?? 0} 条。未选择时保留原句，接受后才替换；排除会删除整条。</p>}
-              <p className="note">这里只列出有改动或新增的建议；未改动的 bullet 自动保留，不需要接受或排除。左侧显示原简历的完整 bullet（包含续行和分句）。追问补充的新增建议需接受后才加入。规则校验只检查来源、确认状态和数字，请同时核实职责与个人贡献。</p>
+              <p className="note">这里只列出有改动或新增的建议；未改动的 bullet 自动保留，不需要接受或排除。左侧显示原简历的完整 bullet（包含续行和分句）。追问补充的新增建议需接受后才加入。数字会按来源逐项检查单位、指标、归属和限制说明；对应关系无法确认时拦截改写并保留原句。规则检查不等于外部事实核实，请同时核实职责与个人贡献。</p>
               {!needsOriginals && reviewableBulletCount === 0 && <p className="note" role="status">当前没有需要审阅的改动。未改动的原句会保留在下方简历中。</p>}
               {(!needsOriginals ? reviewCards : []).map((rc) => (
                 <div className="cardbox" key={rc.card_id}>
@@ -772,7 +772,7 @@ export default function Page() {
                               <div className="row"><button disabled={locked || !editText.trim()} onClick={() => reviewBullet(key, editText, "pending")}>保存并重新校验</button><button className="ghost" disabled={locked} onClick={() => setEditing(null)}>取消</button></div>
                             </> : <p className="bullet-text">{b.text}</p>}
                             {b.text !== original.text && <details><summary>查看 AI 原建议</summary><p>{original.text}</p></details>}
-                            <p className={`note ${!b.ok ? "err" : ""}`}>{b.ok ? "来源与数字规则校验通过" : b.issues.join("；")}</p>
+                            <p className={`note ${!b.ok ? "err" : ""}`}>{b.ok ? "来源及数字对应规则未发现冲突；仍需核实事实" : b.issues.join("；")}</p>
                             <p className="note">{status === "excluded" ? "本条已从最终简历排除。" : status === "accepted" && b.ok ? "最终简历使用这条改写稿。" : sourceBullet ? "最终简历保留左侧原句。编辑保存后仍需点「接受这条」才替换。" : "本条尚未加入最终简历。"}</p>
                             <div className="row">
                               <button disabled={locked || !b.ok || editing !== null || status === "accepted"} onClick={() => reviewBullet(key, b.text, "accepted")}>接受这条</button>
