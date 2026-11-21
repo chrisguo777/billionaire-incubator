@@ -372,6 +372,8 @@ export default function Page() {
   const orderedRanked = db ? orderResumeCards(ranked, db, sortMode, ranked) : [];
   const orderedRewritten = reviewed && db ? orderResumeCards(reviewed.rewritten, db, sortMode, ranked) : [];
   const reviewCards = db ? reviewableCards(db, orderedRewritten) : [];
+  // 生成过简历、列表里有经历，但用户把每一段的「保留」都取消了（已知问题 43）。
+  const noExperienceRetained = !!result && orderedRanked.length > 0 && orderedRanked.every((r) => !r.included);
   const reviewableBulletCount = reviewCards.reduce((count, card) => count + card.rows.length, 0);
 
   const sources = useMemo(() => {
@@ -739,7 +741,8 @@ export default function Page() {
               <h2 style={{ marginTop: 16 }}>改写对照与逐条审阅</h2>
               {needsOriginals ? <p className="note" role="status">当前结果来自旧版，请点「生成简历」补齐完整原句，已有追问记录会保留。</p> : <p className="note" role="status">共 {totalBullets} 条，其中改动或新增建议 {reviewableBulletCount} 条；已接受 {acceptedCount} 条，保留原句 {retainedCount} 条，已排除 {reviewed?.stats?.excluded ?? 0} 条。未选择时保留原句，接受后才替换；排除会删除整条。</p>}
               <p className="note">这里只列出有改动或新增的建议；未改动的 bullet 自动保留，不需要接受或排除。左侧显示原简历的完整 bullet（包含续行和分句）。追问补充的新增建议需接受后才加入。数字会按来源逐项检查单位、指标、归属和限制说明；对应关系无法确认时拦截改写并保留原句。规则检查不等于外部事实核实，请同时核实职责与个人贡献。</p>
-              {!needsOriginals && reviewableBulletCount === 0 && <p className="note" role="status">当前没有需要审阅的改动。未改动的原句会保留在下方简历中。</p>}
+              {!needsOriginals && noExperienceRetained && <p className="warn warn-block" role="status">你已取消保留所有经历，下方简历里不会有任何经历内容，原句也不会保留。在上方「经历排序与保留」重新勾选至少一段经历，原句和之前的审阅选择会恢复。</p>}
+              {!needsOriginals && !noExperienceRetained && reviewableBulletCount === 0 && <p className="note" role="status">当前没有需要审阅的改动。未改动的原句会保留在下方简历中。</p>}
               {(!needsOriginals ? reviewCards : []).map((rc) => (
                 <div className="cardbox" key={rc.card_id}>
                   <h3>{cardName(rc.card_id)}</h3>
@@ -793,7 +796,9 @@ export default function Page() {
                 <p>当前预览有 {previewExperienceCount} 段经历，目标至少 {TARGET_EXPERIENCES} 段。已记录的新增经历需要先在上方接受描述才会加入；也可以恢复被排除的原句。确实没有其他可保留经历时，可按现有数量继续。</p>
                 <button className="ghost" disabled={locked || editing !== null} onClick={continueWithCurrentExperiences}>没有其他可保留经历，按现有数量继续</button>
               </div>}
-              <p className="note">当前简历保留 {retainedCount} 条原句，使用 {acceptedCount} 条已接受的改写或新增描述。未操作的原句会保留。</p>
+              {noExperienceRetained
+                ? <p className="warn warn-block" role="status">当前没有保留任何经历，预览里没有经历内容，所以下载、复制和评估已暂停。在上方「经历排序与保留」勾选至少一段经历后即可恢复。</p>
+                : <p className="note">当前简历保留 {retainedCount} 条原句，使用 {acceptedCount} 条已接受的改写或新增描述。未操作的原句会保留。</p>}
               <p className="note">当前排序：{SORT_LABELS[sortMode]}</p>
               <p className="note">下面的预览和导出的 PDF 是同一份排版，排序、保留和已接受的改写都会同步。点「下载 PDF」会打开打印窗口，在目标打印机里选择「存储为 PDF」即可保存；「下载 Word」直接下载 .docx 文件，可以继续在 Word 里修改。</p>
               <fieldset className="resume-sort" disabled={locked || needsOriginals}>

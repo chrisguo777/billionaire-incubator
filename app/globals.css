@@ -129,6 +129,7 @@ pre.out {
 .err { color: var(--bad); margin-top: 8px; }
 .note { color: var(--muted); font-size: 12.5px; }
 ul.warn { margin: 6px 0 0; padding-left: 18px; color: var(--warn); font-size: 13px; }
+.warn-block { margin: 8px 0; padding: 8px 12px; color: var(--warn); font-size: 13px; border: 1px solid currentColor; border-radius: 6px; }
 
 .bullet-review { border-top: 1px solid var(--line); padding: 14px 0; }
 .review-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
