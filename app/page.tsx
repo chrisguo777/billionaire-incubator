@@ -542,8 +542,8 @@ export default function Page() {
         </div>
         <JobPicker disabled={!!busy} onUse={setJdText} />
         <div className="grid2">
-          <textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} aria-label="CV" disabled={!!busy} />
-          <textarea value={jdText} onChange={(e) => setJdText(e.target.value)} aria-label="JD" disabled={!!busy} />
+          <label className="input-field"><span>您的简历：</span><textarea value={cv} onChange={(e) => { setCv(e.target.value); setUploadInfo(null); }} disabled={!!busy} /></label>
+          <label className="input-field"><span>您的JD：</span><textarea value={jdText} onChange={(e) => setJdText(e.target.value)} disabled={!!busy} /></label>
         </div>
         {mode === "mock" && (
           <p className="note">Mock 模式只认识内置的示例 CV/JD；换成别的文本需要配置模型的 API key（模板见 .env.example）。</p>

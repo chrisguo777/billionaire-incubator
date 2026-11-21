@@ -42,6 +42,7 @@ section.card {
 }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+.input-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 textarea {
   width: 100%;
   min-height: 220px;
