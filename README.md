@@ -45,6 +45,7 @@ Built by a team of four between September and November 2026. Members are listed 
   - Resume header (name and contact details), bold job titles, one-page layout by default, and clean printing without browser headers ([#16](https://github.com/chrisguo777/billionaire-incubator/pull/16))
   - Development logic diagram behind the experience database: the affiliation → card → field structure, the "basis" field for outcomes, and per-field confirmation status ([docs/schema-v1.md](docs/schema-v1.md))
   - Privacy mode with placeholder Word export ([#10](https://github.com/chrisguo777/billionaire-incubator/pull/10), submitted, not merged)
+  - Experience checking, education matching, re-asking questions and a fix for original bullets mixing across experiences ([#36](https://github.com/chrisguo777/billionaire-incubator/pull/36), submitted, not merged; its visible input labels were adopted in [#38](https://github.com/chrisguo777/billionaire-incubator/pull/38))
   - Testing feedback: questions asking for education already on the resume, and one experience split into several
 - **Paxton** ([@chrisguo777](https://github.com/chrisguo777))
   - Started the project; product architecture and the first working prototype (parsing, job analysis, matching, gap rules, questions, rewriting and the fact check)
@@ -52,19 +53,25 @@ Built by a team of four between September and November 2026. Members are listed 
   - Reading a full job description from a posting link, and company name autocomplete ([#18](https://github.com/chrisguo777/billionaire-incubator/pull/18))
   - Integrated resume preview, PDF / Word export and shorter interview questions ([#12](https://github.com/chrisguo777/billionaire-incubator/pull/12))
   - Retry on invalid structured output and clear error messages ([#22](https://github.com/chrisguo777/billionaire-incubator/pull/22))
-  - Code review and merging, CHANGELOG and documentation ([#4](https://github.com/chrisguo777/billionaire-incubator/pull/4), [#11](https://github.com/chrisguo777/billionaire-incubator/pull/11), [#13](https://github.com/chrisguo777/billionaire-incubator/pull/13), [#14](https://github.com/chrisguo777/billionaire-incubator/pull/14), [#19](https://github.com/chrisguo777/billionaire-incubator/pull/19)–[#21](https://github.com/chrisguo777/billionaire-incubator/pull/21), [#23](https://github.com/chrisguo777/billionaire-incubator/pull/23), [#24](https://github.com/chrisguo777/billionaire-incubator/pull/24))
+  - Support for any model with an OpenAI-compatible API, alongside Claude ([#29](https://github.com/chrisguo777/billionaire-incubator/pull/29))
+  - Keeping progress across page refreshes, and locking old results after the resume or job description changes ([#30](https://github.com/chrisguo777/billionaire-incubator/pull/30))
+  - Job-title autocomplete from public job boards after choosing a company ([#33](https://github.com/chrisguo777/billionaire-incubator/pull/33))
+  - Visible labels on the resume and job description inputs ([#38](https://github.com/chrisguo777/billionaire-incubator/pull/38)) and a Next.js security upgrade ([#32](https://github.com/chrisguo777/billionaire-incubator/pull/32))
+  - Code review and merging, CHANGELOG and documentation, MIT license ([#4](https://github.com/chrisguo777/billionaire-incubator/pull/4), [#11](https://github.com/chrisguo777/billionaire-incubator/pull/11), [#13](https://github.com/chrisguo777/billionaire-incubator/pull/13), [#14](https://github.com/chrisguo777/billionaire-incubator/pull/14), [#19](https://github.com/chrisguo777/billionaire-incubator/pull/19)–[#21](https://github.com/chrisguo777/billionaire-incubator/pull/21), [#23](https://github.com/chrisguo777/billionaire-incubator/pull/23)–[#28](https://github.com/chrisguo777/billionaire-incubator/pull/28), [#31](https://github.com/chrisguo777/billionaire-incubator/pull/31), [#35](https://github.com/chrisguo777/billionaire-incubator/pull/35))
 - **Shera** ([@sheraduan729-cloud](https://github.com/sheraduan729-cloud))
   - Word / TXT resume upload, bullet-by-bullet review, evidence-based six-dimension quality evaluation and a repeat-evaluation script ([#3](https://github.com/chrisguo777/billionaire-incubator/pull/3))
   - Sorting the resume by job relevance or by date ([#6](https://github.com/chrisguo777/billionaire-incubator/pull/6))
   - Keeping every original bullet whole, keeping the original when a rewrite is not accepted, and removing duplicates within an experience ([#7](https://github.com/chrisguo777/billionaire-incubator/pull/7))
   - Letting users choose which experiences to keep, and follow-up questions when fewer than three remain ([#9](https://github.com/chrisguo777/billionaire-incubator/pull/9))
   - Weighted score rings, reviewing only bullets that actually changed, and API configuration status ([#15](https://github.com/chrisguo777/billionaire-incubator/pull/15))
+  - Checking that numbers in rewritten bullets keep their unit, metric and owner from the source fact, and blocking facts borrowed from other experiences ([#34](https://github.com/chrisguo777/billionaire-incubator/pull/34))
   - Product framework and experience-card design: experience types, and personal actions stored apart from team actions ([docs/schema-v1.md](docs/schema-v1.md))
   - A round of systematic testing in November 2026 that logged 10 issues, each with steps to reproduce and acceptance criteria
 - **Ziyue** ([@Ziyue1296](https://github.com/Ziyue1296))
   - Education in parsing and in the generated resume ([#2](https://github.com/chrisguo777/billionaire-incubator/pull/2))
   - Separate settings for the conversation language and the resume language, and a fix for Chinese text appearing in English resumes ([#17](https://github.com/chrisguo777/billionaire-incubator/pull/17))
   - First implementation of resume preview, PDF / Word export and shorter interview questions ([#5](https://github.com/chrisguo777/billionaire-incubator/pull/5); these three parts were merged through #12)
+  - A warning when every experience has been removed from the resume ([#37](https://github.com/chrisguo777/billionaire-incubator/pull/37))
 
 ## License
 
